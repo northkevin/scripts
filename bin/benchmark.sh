@@ -1,17 +1,35 @@
 #!/bin/bash
 
-# Number of times to run the test suite
-NUM_RUNS=$1
-
-if [ -z "$NUM_RUNS" ]; then
-  echo "Usage: $0 <number_of_runs>"
+# Function to display usage
+usage() {
+  echo "Usage: $0 -n <number_of_runs> -c \"<command_to_benchmark>\""
   exit 1
+}
+
+# Parse command-line arguments
+while getopts "n:c:" opt; do
+  case ${opt} in
+    n )
+      NUM_RUNS=$OPTARG
+      ;;
+    c )
+      COMMAND=$OPTARG
+      ;;
+    \? )
+      usage
+      ;;
+  esac
+done
+
+# Check if required arguments are provided
+if [ -z "$NUM_RUNS" ] || [ -z "$COMMAND" ]; then
+  usage
 fi
 
 # Array to store individual run times
 declare -a run_times
 
-echo "Running mix test $NUM_RUNS times..."
+echo "Running '$COMMAND' $NUM_RUNS times..."
 
 # Function to calculate average
 calculate_average() {
@@ -24,11 +42,11 @@ calculate_average() {
   echo $average
 }
 
-# Run the tests the specified number of times
+# Run the command the specified number of times
 for ((i=1; i<=NUM_RUNS; i++)); do
   echo "Run #$i..."
   start_time=$(date +%s.%N)
-  mix test > /dev/null 2>&1
+  eval $COMMAND > /dev/null 2>&1
   end_time=$(date +%s.%N)
   elapsed_time=$(echo "$end_time - $start_time" | bc)
   run_times+=($elapsed_time)
