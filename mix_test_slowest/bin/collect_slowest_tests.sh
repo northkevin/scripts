@@ -1,10 +1,10 @@
 #!/bin/bash
-# ~/scripts/bin/collect_slowest_tests.sh
+# /Users/kevin.north/scripts/mix_test_slowest/bin/collect_slowest_tests.sh
 
 # Number of runs
 RUNS=100
-LOG_DIR=~/scripts/slowest_tests_logs
-LOG_FILE=~/scripts/slowest_tests_db.log
+LOG_DIR=/Users/kevin.north/scripts/mix_test_slowest/slowest_tests_logs
+LOG_FILE=/Users/kevin.north/scripts/mix_test_slowest/slowest_tests_db.log
 
 # Create log directory if not exists
 mkdir -p $LOG_DIR

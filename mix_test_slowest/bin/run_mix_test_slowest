@@ -1,0 +1,18 @@
+#!/bin/bash
+
+# Define paths
+PROJECT_DIR=$1
+NUM_RUNS=$2
+SLOWEST_LOG_DIR=~/scripts/mix_test_slowest
+LOG_FILE=$SLOWEST_LOG_DIR/slowest_tests_db.log
+
+# Step 1: Run mix test --slowest or collect_slowest_tests.sh
+~/scripts/mix_test_slowest/bin/collect_slowest_tests.sh -n $NUM_RUNS -p $PROJECT_DIR
+
+# Step 2: Analyze the log file
+python3 ~/scripts/mix_test_slowest/bin/analyze_slowest_tests.py $LOG_FILE $SLOWEST_LOG_DIR/slowest_tests_analysis.json
+
+# Step 3: Generate the summary and CSV files
+python3 ~/scripts/mix_test_slowest/bin/analyze_slowest_tests_summary.py $SLOWEST_LOG_DIR/slowest_tests_analysis.json $SLOWEST_LOG_DIR/slowest_tests_summary.json $SLOWEST_LOG_DIR/top_10_slowest_tests.csv $SLOWEST_LOG_DIR/full_slowest_tests_summary.json $SLOWEST_LOG_DIR/full_slowest_tests_summary.csv
+
+echo "Process completed. Check the output files in $SLOWEST_LOG_DIR."

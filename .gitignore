@@ -1,4 +1,35 @@
-.vscode
+# Ignore all logs and analysis files from mix_test_slowest
+mix_test_slowest/logs/
+mix_test_slowest/slowest_tests_db.log
+mix_test_slowest/slowest_tests_logs/
+mix_test_slowest/slowest_tests_analysis.json
+mix_test_slowest/slowest_tests_summary.json
+mix_test_slowest/full_slowest_tests_summary.json
+mix_test_slowest/top_10_slowest_tests.csv
+mix_test_slowest/full_slowest_tests_summary.csv
+
+# Ignore all logs from optimize_hardware_experiments
+optimize_hardware_experiments/logs/
+optimize_hardware_experiments/experiment_logs_file_descriptors.txt
+optimize_hardware_experiments/experiment_logs_nfs.txt
+optimize_hardware_experiments/experiment_logs_ramdisk.txt
+
+# Ignore virtual environments
+venv/
+.venv/
+
+# Ignore Python cache files
+__pycache__/
+*.pyc
+*.pyo
+
+# Ignore any other temporary or build files
 *.log
-experiment_logs*
-*.json
+*.tmp
+*.bak
+*.swp
+*.swo
+.DS_Store
+
+# Ignore VS Code settings
+.vscode/

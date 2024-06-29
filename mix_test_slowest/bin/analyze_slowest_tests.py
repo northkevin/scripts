@@ -2,10 +2,8 @@ import re
 import json
 from collections import defaultdict
 
-log_file = '/Users/kevin.north/scripts/slowest_tests_db.log'
-analysis_file = '/Users/kevin.north/scripts/slowest_tests_analysis.json'
-
-analysis_file = '/mnt/data/slowest_tests_analysis.json'
+log_file = '/Users/kevin.north/scripts/mix_test_slowest/slowest_tests_db.log'
+analysis_file = '/Users/kevin.north/scripts/mix_test_slowest/slowest_tests_analysis.json'
 
 # Parse the log file
 test_pattern = re.compile(r"\* test (.+?) \((.+?)\) \[(.+?)\:(\d+)\]")
@@ -30,10 +28,10 @@ for key, data in test_data.items():
     analysis_results.append({
         'test_name': key,
         'count': data['count'],
-        'average_time_ms': sum(times) / len(times),
-        'min_time_ms': min(times),
-        'max_time_ms': max(times),
-        'times': times
+        'average_time_s': round(sum(times) / len(times) / 1000, 2),
+        'min_time_s': round(min(times) / 1000, 2),
+        'max_time_s': round(max(times) / 1000, 2),
+        'times': [round(t / 1000, 2) for t in times]
     })
 
 # Save analysis results to a JSON file
