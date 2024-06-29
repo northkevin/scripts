@@ -1,8 +1,17 @@
+import sys
 import json
 import pandas as pd
 import re
 
-analysis_file = '/Users/kevin.north/scripts/mix_test_slowest/slowest_tests_analysis.json'
+if len(sys.argv) < 6:
+    print("Usage: python analyze_slowest_tests_summary.py <analysis_file> <summary_file> <top_10_csv> <full_summary_json> <full_summary_csv>")
+    sys.exit(1)
+
+analysis_file = sys.argv[1]
+summary_file = sys.argv[2]
+top_10_csv = sys.argv[3]
+full_summary_json = sys.argv[4]
+full_summary_csv = sys.argv[5]
 
 # Load the JSON data
 with open(analysis_file, 'r') as f:
@@ -106,12 +115,13 @@ print_distribution_summary(count_summary, 'count')
 print_distribution_summary(avg_s_summary, 'avg_s')
 
 # Save the summary to a new JSON file
-summary_file = '/Users/kevin.north/scripts/mix_test_slowest/slowest_tests_summary.json'
 top_tests.to_json(summary_file, orient='records', indent=2)
 
 # Also save the full summary to a new JSON file for all tests
-full_summary_file = '/Users/kevin.north/scripts/mix_test_slowest/full_slowest_tests_summary.json'
-df.to_json(full_summary_file, orient='records', indent=2)
+df.to_json(full_summary_json, orient='records', indent=2)
+
+# Save the full summary to a CSV file for all tests
+df.to_csv(full_summary_csv, index=False)
 
 print(f"\nSummary saved to {summary_file}")
-print(f"Full summary saved to {full_summary_file}")
+print(f"Full summary saved to {full_summary_json}")

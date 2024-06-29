@@ -1,9 +1,14 @@
 import re
 import json
 from collections import defaultdict
+import sys
 
-log_file = '/Users/kevin.north/scripts/mix_test_slowest/slowest_tests_db.log'
-analysis_file = '/Users/kevin.north/scripts/mix_test_slowest/slowest_tests_analysis.json'
+if len(sys.argv) < 3:
+    print("Usage: python analyze_slowest_tests.py <log_file> <analysis_file>")
+    sys.exit(1)
+
+log_file = sys.argv[1]
+analysis_file = sys.argv[2]
 
 # Parse the log file
 test_pattern = re.compile(r"\* test (.+?) \((.+?)\) \[(.+?)\:(\d+)\]")

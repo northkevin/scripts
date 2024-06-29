@@ -1,18 +1,65 @@
 #!/bin/bash
 
+# Function to display usage instructions
+usage() {
+    echo "Usage: $0 -p <project_directory> -n <number_of_runs> -s <number_of_slowest_tests>"
+    echo "  -p  Project directory where mix.exs is located"
+    echo "  -n  Number of times to run the test suite"
+    echo "  -s  Number of slowest tests to log"
+    exit 1
+}
+
+# Parse command-line options
+while getopts n:p:s: flag
+do
+    case "${flag}" in
+        n) NUM_RUNS=${OPTARG};;
+        p) PROJECT_DIR=${OPTARG};;
+        s) NUM_SLOWEST_TESTS=${OPTARG};;
+        *) usage;;
+    esac
+done
+
+# Check if all required arguments are provided
+if [ -z "$NUM_RUNS" ] || [ -z "$PROJECT_DIR" ] || [ -z "$NUM_SLOWEST_TESTS" ]; then
+    usage
+fi
+
 # Define paths
-PROJECT_DIR=$1
-NUM_RUNS=$2
 SLOWEST_LOG_DIR=~/scripts/mix_test_slowest
 LOG_FILE=$SLOWEST_LOG_DIR/slowest_tests_db.log
+LOG_DIR=$SLOWEST_LOG_DIR/slowest_tests_logs
 
-# Step 1: Run mix test --slowest or collect_slowest_tests.sh
-~/scripts/mix_test_slowest/bin/collect_slowest_tests.sh -n $NUM_RUNS -p $PROJECT_DIR
+ANALYSIS_JSON=$SLOWEST_LOG_DIR/slowest_tests_analysis.json
+SUMMARY_JSON=$SLOWEST_LOG_DIR/slowest_tests_summary.json
+TOP_10_CSV=$SLOWEST_LOG_DIR/top_10_slowest_tests.csv
+FULL_SUMMARY_JSON=$SLOWEST_LOG_DIR/full_slowest_tests_summary.json
+FULL_SUMMARY_CSV=$SLOWEST_LOG_DIR/full_slowest_tests_summary.csv
+
+# Cleanup old logs and analysis files
+rm -f $LOG_FILE
+rm -rf $LOG_DIR
+rm -f $ANALYSIS_JSON
+rm -f $SUMMARY_JSON
+rm -f $TOP_10_CSV
+rm -f $FULL_SUMMARY_JSON
+rm -f $FULL_SUMMARY_CSV
+
+mkdir -p $LOG_DIR
+
+# Step 1: Run mix test --slowest
+for i in $(seq 1 $NUM_RUNS)
+do
+    echo "Running test iteration $i..."
+    (cd $PROJECT_DIR && mix test --slowest $NUM_SLOWEST_TESTS) > $LOG_DIR/slowest_tests_$i.log
+    cat $LOG_DIR/slowest_tests_$i.log >> $LOG_FILE
+    echo "Logged results for iteration $i."
+done
 
 # Step 2: Analyze the log file
-python3 ~/scripts/mix_test_slowest/bin/analyze_slowest_tests.py $LOG_FILE $SLOWEST_LOG_DIR/slowest_tests_analysis.json
+python3 ~/scripts/mix_test_slowest/bin/analyze_slowest_tests.py $LOG_FILE $ANALYSIS_JSON
 
 # Step 3: Generate the summary and CSV files
-python3 ~/scripts/mix_test_slowest/bin/analyze_slowest_tests_summary.py $SLOWEST_LOG_DIR/slowest_tests_analysis.json $SLOWEST_LOG_DIR/slowest_tests_summary.json $SLOWEST_LOG_DIR/top_10_slowest_tests.csv $SLOWEST_LOG_DIR/full_slowest_tests_summary.json $SLOWEST_LOG_DIR/full_slowest_tests_summary.csv
+python3 ~/scripts/mix_test_slowest/bin/analyze_slowest_tests_summary.py $ANALYSIS_JSON $SUMMARY_JSON $TOP_10_CSV $FULL_SUMMARY_JSON $FULL_SUMMARY_CSV
 
 echo "Process completed. Check the output files in $SLOWEST_LOG_DIR."
