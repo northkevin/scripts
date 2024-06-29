@@ -1,1 +1,4 @@
 .vscode
+*.log
+experiment_logs*
+*.json
