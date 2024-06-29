@@ -11,7 +11,7 @@ log_file = sys.argv[1]
 analysis_file = sys.argv[2]
 
 # Parse the log file
-test_pattern = re.compile(r"\* test (.+?) \((.+?)\) \[(.+?)\:(\d+)\]")
+test_pattern = re.compile(r"\* test (.+?) \((.+?)\) \((.+?)\) \[(.+?)\:(\d+)\]")
 
 test_data = defaultdict(lambda: {'count': 0, 'times': []})
 
@@ -33,9 +33,9 @@ for key, data in test_data.items():
     analysis_results.append({
         'test_name': key,
         'count': data['count'],
-        'average_time_s': round(sum(times) / len(times) / 1000, 2),
-        'min_time_s': round(min(times) / 1000, 2),
-        'max_time_s': round(max(times) / 1000, 2),
+        'avg_s': round(sum(times) / len(times) / 1000, 2),
+        'min_s': round(min(times) / 1000, 2),
+        'max_s': round(max(times) / 1000, 2),
         'times': [round(t / 1000, 2) for t in times]
     })
 

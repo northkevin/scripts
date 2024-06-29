@@ -20,14 +20,6 @@ with open(analysis_file, 'r') as f:
 # Convert to DataFrame
 df = pd.DataFrame(data)
 
-# Convert times from milliseconds to seconds and round to 2 decimal places
-df['avg_s'] = (df['average_time_ms'] / 1000).round(2)
-df['min_s'] = (df['min_time_ms'] / 1000).round(2)
-df['max_s'] = (df['max_time_ms'] / 1000).round(2)
-
-# Drop the millisecond columns
-df = df.drop(columns=['average_time_ms', 'min_time_ms', 'max_time_ms'])
-
 # Extract file path and line number from test_name and create a combined column
 def extract_file_info(test_name):
     match = re.search(r'\[(.+?)\:(\d+)\]', test_name)
@@ -36,9 +28,6 @@ def extract_file_info(test_name):
     return None
 
 df['file_path'] = df['test_name'].apply(extract_file_info)
-
-# Shorten headers
-df = df.rename(columns={'count': 'count', 'avg_s': 'avg_s', 'min_s': 'min_s', 'max_s': 'max_s'})
 
 # Sort by count and average time
 top_tests = df.sort_values(by=['count', 'avg_s'], ascending=[False, False]).head(10)

@@ -52,9 +52,12 @@ for i in $(seq 1 $NUM_RUNS)
 do
     echo "Running test iteration $i..."
     (cd $PROJECT_DIR && mix test --slowest $NUM_SLOWEST_TESTS) > $LOG_DIR/slowest_tests_$i.log
-    cat $LOG_DIR/slowest_tests_$i.log >> $LOG_FILE
+    # Extract and log the slowest 10 tests
+    grep -A $NUM_SLOWEST_TESTS "Top $NUM_SLOWEST_TESTS slowest" $LOG_DIR/slowest_tests_$i.log | tail -n $NUM_SLOWEST_TESTS >> $LOG_FILE
     echo "Logged results for iteration $i."
 done
+
+echo "Completed $NUM_RUNS test runs. Results logged in $LOG_FILE."
 
 # Step 2: Analyze the log file
 python3 ~/scripts/mix_test_slowest/bin/analyze_slowest_tests.py $LOG_FILE $ANALYSIS_JSON
