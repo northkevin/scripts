@@ -1,27 +1,87 @@
-scripts/
-├── podcasts/
-│   ├── main.py             # Single CLI entry point
-│   ├── fetch_vimeo.py      # Helper: fetch & parse data from a Vimeo embed URL
-│   ├── transcript_utils.py # Helper: download & optionally transform .vtt
-│   └── ...
-├── (other scripts).py
-└── ...
+# Podcast Processing Tools
 
-1. pip install requests
+Process podcast episodes from Vimeo URLs to structured JSON data with transcripts and claims analysis.
 
-2. cd scripts/podcasts
+## Setup
 
-3. parse-episode
+1. Install dependencies:
+```bash
+pip install -r requirements.txt
+```
+
+## Usage
+
+The tool maintains state between commands so you don't need to manually track IDs and files.
+
+### 1. Extract Episode Info
+Start with the Vimeo URL:
+```bash
 python main.py parse-episode --vimeo_url "https://player.vimeo.com/video/1012842356"
+```
 
-4. get-transcript
-python main.py get-transcript \
-    --webvtt_link "/texttrack/186140220.vtt?token=XYZ" \
-    --episode_id 002 \
-    --slug jack_kruse
+This will:
+- Extract episode metadata
+- Find transcript information
+- Save state for next step
+- Show you the next command to run
 
-5. generate-prompt
-python main.py generate-prompt \
-    --episode_id 002 \
-    --title "Jack Kruse Podcast" \
-    --transcript_file "transcripts/002_jack_kruse.vtt"
+### 2. Download Transcript
+Run the suggested command (or just):
+```bash
+python main.py get-transcript
+```
+
+This will:
+- Use saved state from previous step
+- Download the transcript file
+- Save state for next step
+- Show you the next command to run
+
+### 3. Generate Claims Prompt
+Run the suggested command (or just):
+```bash
+python main.py generate-prompt
+```
+
+This will:
+- Use saved state from previous steps
+- Generate a ChatGPT prompt for claims analysis
+- Include relevant transcript sections
+
+## Project Structure
+```
+podcasts/
+├── main.py             # Main CLI tool
+├── fetch_vimeo.py      # Vimeo data extraction
+├── transcript_utils.py # Transcript processing
+├── generate_prompt.py  # Prompt generation
+└── Podcast Data/      # Output directory
+    ├── transcripts/   # Downloaded transcripts
+    └── .current_episode.json  # State tracking
+```
+
+## State Management
+
+The tool maintains state in `.current_episode.json` to track:
+- Current episode ID
+- Transcript file location
+- Episode metadata
+
+This eliminates the need to copy/paste information between steps.
+
+## Manual Override
+
+While the tool maintains state automatically, you can still provide arguments manually:
+
+```bash
+# Specify episode ID manually
+python main.py get-transcript --episode_id "1012842356"
+
+# Specify transcript file manually
+python main.py generate-prompt --episode_id "1012842356" --transcript_file "path/to/transcript.vtt"
+```
+
+## Notes
+- Each command suggests the next command to run
+- Transcripts are saved in .vtt format
+- State is maintained in the Podcast Data directory

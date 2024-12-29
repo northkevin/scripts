@@ -1,200 +1,251 @@
 #!/usr/bin/env python3
-# scripts/podcasts/main.py
 
 import argparse
 import os
 import json
-
 from pathlib import Path
-import logging
-from logging.handlers import RotatingFileHandler
-from datetime import datetime
 
 from fetch_vimeo import get_vimeo_data_headless
 from transcript_utils import download_vtt_file
 from generate_prompt import generate_prompt
 
-
 # ------------------------------------------------------------
-# Logging Setup
-# ------------------------------------------------------------
-LOG_FILE = "script.log"
-
-handler = RotatingFileHandler(LOG_FILE, maxBytes=200_000, backupCount=2)  # ~200 KB before rotating
-formatter = logging.Formatter("%(asctime)s [%(levelname)s] %(message)s", "%Y-%m-%d %H:%M:%S")
-handler.setFormatter(formatter)
-
-logger = logging.getLogger("podcast_cli")
-logger.setLevel(logging.DEBUG)
-logger.addHandler(handler)
-
-def log_print(msg: str):
-    """
-    Print to console and also log to rotating file.
-    """
-    print(msg)
-    logger.info(msg)
-
-# ------------------------------------------------------------
-# Paths
+# Paths & State Management
 # ------------------------------------------------------------
 BASE_DIR = Path(__file__).parent
-DEFAULT_JSON_FILE = BASE_DIR / "Podcast Data" / "test.json"
-TRANSCRIPTS_DIR = BASE_DIR / "Podcast Data" / "transcripts"
-os.makedirs(TRANSCRIPTS_DIR, exist_ok=True)
+PODCAST_DATA = BASE_DIR / "Podcast Data"
+TRANSCRIPTS_DIR = PODCAST_DATA / "transcripts"
+STATE_FILE = PODCAST_DATA / ".current_episode.json"
+DEFAULT_DB_FILE = PODCAST_DATA / "podcast_data.json"
 
+EPISODE_SCHEMA = {
+    "episode_id": "",
+    "title": "",
+    "share_url": "",
+    "podcast_name": "",
+    "interviewee": {
+        "name": "<MANUAL>",
+        "profession": "<MANUAL>",
+        "organization": "<MANUAL>"
+    },
+    "air_date": "",
+    "summary": "<MANUAL>",
+    "claims": [],
+    "related_topics": [],
+    "tags": [],
+    "webvtt_link": "",
+    "transcript_file": ""
+}
 
-# ------------------------------------------------------------
-# 1) parse-episode: get data from Vimeo URL
-# ------------------------------------------------------------
-def cmd_parse_episode(args):
-    """
-    Usage: python main.py parse-episode --vimeo_url "https://player.vimeo.com/video/1012842356"
-    """
-    try:
-        data = get_vimeo_data_headless(args.vimeo_url)
-    except Exception as e:
-        log_print(f"Error fetching with Selenium: {e}")
-        return
+def save_state(episode_id=None, transcript_file=None, metadata=None):
+    """Save current episode state to help track progress between commands"""
+    PODCAST_DATA.mkdir(exist_ok=True)
+    
+    state = {}
+    if os.path.exists(STATE_FILE):
+        with open(STATE_FILE) as f:
+            state = json.load(f)
+    
+    if episode_id:
+        state["episode_id"] = episode_id
+    if transcript_file:
+        state["transcript_file"] = transcript_file
+    if metadata:
+        state["metadata"] = metadata
+        
+    with open(STATE_FILE, 'w') as f:
+        json.dump(state, f, indent=2)
 
-    player_data = data["playerConfig"]     # window.playerConfig dict
-    ld_json_list = data["ld_json"]         # all ld+json blocks
-    page_source = data["page_source"]      # raw HTML (if needed)
+def get_state():
+    """Get current episode state"""
+    if os.path.exists(STATE_FILE):
+        with open(STATE_FILE) as f:
+            return json.load(f)
+    return {}
 
-    # 1) Possibly find the "VideoObject" from ld_json
+def save_to_database(metadata, db_file=DEFAULT_DB_FILE):
+    """Save/update episode in the master database"""
+    db_file.parent.mkdir(exist_ok=True)
+    
+    # Load existing database
+    episodes = []
+    if os.path.exists(db_file):
+        with open(db_file) as f:
+            episodes = json.load(f)
+    
+    # Update or add episode
+    episode_id = metadata["episode_id"]
+    for i, ep in enumerate(episodes):
+        if ep["episode_id"] == episode_id:
+            episodes[i].update(metadata)
+            break
+    else:
+        episodes.append(metadata)
+    
+    # Save database
+    with open(db_file, 'w') as f:
+        json.dump(episodes, f, indent=2)
+
+def create_episode_metadata(video_id, vimeo_data):
+    """Create episode metadata using consistent schema"""
+    player_data = vimeo_data["playerConfig"]
+    ld_json_list = vimeo_data["ld_json"]
     ld_video = next((x for x in ld_json_list if x.get("@type") == "VideoObject"), {})
-
-    # 2) Determine the webvtt link if available
-    text_tracks = player_data.get("request", {}).get("text_tracks", [])
-    webvtt_link = ""
-    if text_tracks:
-        # We'll just pick the first track's "url" if it exists
-        raw_url = text_tracks[0].get("url", "")
-        # Combine with "https://player.vimeo.com" if it's a relative path
-        if raw_url.startswith("/"):
-            webvtt_link = "https://player.vimeo.com" + raw_url
-        else:
-            webvtt_link = raw_url
-
-    # 3) Build final snippet
-    video_id = str(player_data.get("video", {}).get("id", "unknown"))
-    final_dict = {
-        "episode_id": video_id,
+    
+    # Start with template
+    metadata = EPISODE_SCHEMA.copy()
+    
+    # Fill what we can from Vimeo
+    metadata.update({
+        "episode_id": str(video_id),
         "title": ld_video.get("name", player_data.get("video", {}).get("title", "")),
         "share_url": player_data.get("video", {}).get("share_url", ""),
         "podcast_name": player_data.get("video", {}).get("owner", {}).get("name", "<MANUAL>"),
-        "interviewee": {
-            "name": "<MANUAL>",
-            "profession": "",
-            "organization": "<MANUAL>"
-        },
         "air_date": ld_video.get("uploadDate", ""),
-        "summary": ld_video.get("description", ""),
-        "claims": [],
-        "related_topics": [],
-        "tags": [],
-        # The new "webvtt_link" property:
-        "webvtt_link": webvtt_link,
-        # A possible default transcript filename
-        "transcript_file": f"transcripts/{video_id}_podcast_jack_kruse.txt"
-    }
-
-    snippet_json = json.dumps(final_dict, indent=2)
-    log_print("Here is the combined JSON snippet:")
-    log_print(snippet_json)
+    })
+    
+    # Get transcript info if available
+    text_tracks = player_data.get("request", {}).get("text_tracks", [])
+    if text_tracks:
+        url = text_tracks[0].get("url", "")
+        if "/texttrack/" in url:
+            texttrack_id = url.split("/texttrack/")[1].split(".")[0]
+            token = url.split("token=")[1] if "token=" in url else None
+            metadata["webvtt_link"] = f"https://player.vimeo.com/texttrack/{texttrack_id}.vtt?token={token}"
+            metadata["transcript_info"] = {"texttrack_id": texttrack_id, "token": token}
+    
+    return metadata
 
 # ------------------------------------------------------------
-# 2) get-transcript: download the .vtt
+# Commands
 # ------------------------------------------------------------
-def cmd_get_transcript(args):
-    """
-    Usage Example:
-      python main.py get-transcript \
-        --texttrack_id "186140220" \
-        --token "TOKEN" \
-        --episode_id "1012842356" \
-        --slug "jack_kruse"
-
-    This combines them into:
-      https://player.vimeo.com/texttrack/<texttrack_id>.vtt?token=<token>
-
-    And downloads .vtt -> transcripts/1012842356_jack_kruse.vtt
-    """
-    base_dir = Path(__file__).parent
-    transcripts_dir = base_dir / "Podcast Data" / "transcripts"
-    os.makedirs(transcripts_dir, exist_ok=True)
-
-    out_filename = f"{args.episode_id}_{args.slug}.vtt"
-    out_path = transcripts_dir / out_filename
-
-    # 1) Build final .vtt URL
-    texttrack_id = args.texttrack_id
-    token = args.token
-    webvtt_link = f"https://player.vimeo.com/texttrack/{texttrack_id}.vtt?token={token}"
-
+def cmd_parse_episode(args):
+    """Parse basic data from Vimeo URL"""
     try:
-        log_print(f"Downloading .vtt from {webvtt_link}")
-        download_vtt_file(webvtt_link, out_path.as_posix())
-        log_print(f"Transcript file saved => {out_path}")
+        data = get_vimeo_data_headless(args.vimeo_url)
+        video_id = str(data["playerConfig"].get("video", {}).get("id", "unknown"))
+        
+        # Create metadata using schema
+        metadata = create_episode_metadata(video_id, data)
+        
+        # Save state and database
+        save_state(episode_id=video_id, metadata=metadata)
+        save_to_database(metadata)
+        
+        print("\nEpisode Info:")
+        print(f"ID: {metadata['episode_id']}")
+        print(f"Title: {metadata['title']}")
+        print(f"Podcast: {metadata['podcast_name']}")
+        
+        if metadata.get("transcript_info"):
+            print(f"\nTranscript available!")
+            print(f"texttrack_id: {metadata['transcript_info']['texttrack_id']}")
+            print(f"token: {metadata['transcript_info']['token']}")
+            print("\nRun next command:")
+            print(f"python main.py get-transcript --episode_id {video_id}")
+        
+        print("\nNote: Some fields need manual/ChatGPT completion:")
+        print("- Interviewee details")
+        print("- Summary")
+        print("- Claims (after transcript)")
+        print("- Related topics")
+        print("- Tags")
+        
     except Exception as e:
-        log_print(f"Error downloading transcript: {e}")
+        print(f"Error: {e}")
 
+def cmd_get_transcript(args):
+    """Download transcript using saved state"""
+    state = get_state()
+    episode_id = args.episode_id or state.get("episode_id")
+    if not episode_id:
+        print("Error: No episode_id provided or found in state")
+        return
+        
+    metadata = state.get("metadata", {})
+    transcript_info = metadata.get("transcript_info")
+    if not transcript_info:
+        print("Error: No transcript info found in state")
+        return
+        
+    try:
+        TRANSCRIPTS_DIR.mkdir(exist_ok=True)
+        out_path = TRANSCRIPTS_DIR / f"{episode_id}_transcript.vtt"
+        
+        webvtt_link = f"https://player.vimeo.com/texttrack/{transcript_info['texttrack_id']}.vtt?token={transcript_info['token']}"
+        download_vtt_file(webvtt_link, str(out_path))
+        
+        # Save state for next command
+        save_state(transcript_file=str(out_path))
+        
+        print(f"Transcript saved to: {out_path}")
+        print("\nRun next command:")
+        print(f"python main.py generate-prompt --episode_id {episode_id}")
+        
+    except Exception as e:
+        print(f"Error: {e}")
 
-# ------------------------------------------------------------
-# generate-prompt: produce ChatGPT prompt for top 10 claims
-# ------------------------------------------------------------
 def cmd_generate_prompt(args):
-    """
-    Generate ChatGPT prompt for a specific episode using data from the JSON file.
+    """Generate ChatGPT prompt using saved state"""
+    state = get_state()
+    episode_id = args.episode_id or state.get("episode_id")
+    transcript_file = args.transcript_file or state.get("transcript_file")
+    
+    # Try to use provided JSON file, then default database, then state
+    json_file = args.json_file or DEFAULT_DB_FILE
+    
+    if not episode_id:
+        print("Error: No episode_id provided or found in state")
+        print("Hint: Run 'parse-episode' first or provide --episode_id")
+        return
+        
+    if not transcript_file:
+        print("Error: No transcript file found in state")
+        print(f"Hint: Run 'get-transcript --episode_id {episode_id}' first")
+        print("      or provide --transcript_file manually")
+        return
+    
+    if not os.path.exists(transcript_file):
+        print(f"Error: Transcript file not found: {transcript_file}")
+        print(f"Hint: Check if the file exists or run 'get-transcript' again")
+        return
+        
+    try:
+        prompt = generate_prompt(episode_id, transcript_file, json_file)
+        print("\n--- ChatGPT Prompt ---\n")
+        print(prompt)
+        print("\n-----------------------")
+    except Exception as e:
+        print(f"Error: {e}")
+        print("Hint: Make sure you've completed the previous steps:")
+        print("1. parse-episode - to get episode metadata")
+        print("2. get-transcript - to download the transcript")
+        print(f"3. Check that episode exists in database: {json_file}")
 
-    Usage:
-      python main.py generate-prompt \
-        --episode_id "1012842356" \
-        --transcript_file "Podcast Data/transcripts/1012842356_podcast_jack_kruse.txt" \
-        --json_file "/path/to/json/file.json"
-    """
-    json_file_path = args.json_file or DEFAULT_JSON_FILE
-    prompt = generate_prompt(args.episode_id, args.transcript_file, json_file_path)
-    print("\n--- ChatGPT Prompt ---\n")
-    print(prompt)
-    print("\n-----------------------")
-
-# ------------------------------------------------------------
-# Main CLI
-# ------------------------------------------------------------
 def main():
-    parser = argparse.ArgumentParser(description="Podcast CLI with minimal sub-commands.")
-    sub = parser.add_subparsers(dest="command")
-
-    # parse-episode
-    p_parse = sub.add_parser("parse-episode", help="Parse basic data from a Vimeo embed URL.")
-    p_parse.add_argument("--vimeo_url", required=True)
-
-    # get-transcript command
-    p_trans = sub.add_parser("get-transcript", help="Download .vtt transcript to local file using texttrack_id & token.")
-    p_trans.add_argument("--texttrack_id", required=True, help="The numeric ID e.g. '186140220'.")
-    p_trans.add_argument("--token", required=True, help="The token e.g. '0xfc48b2c22e66093a...'")
-    p_trans.add_argument("--episode_id", required=True, help="Unique episode identifier, e.g. '1012842356'.")
-    p_trans.add_argument("--slug", required=True, help="Short descriptor for the transcript filename, e.g. 'jack_kruse'.")
-    p_trans.set_defaults(func=cmd_get_transcript)
-
-    # ----------------------
-    # generate-prompt command
-    # ----------------------
-    p_prompt = sub.add_parser("generate-prompt", help="Generate a ChatGPT prompt for top 10 claims, referencing transcript.")
-    p_prompt.add_argument("--episode_id", required=True, help="E.g. '1012842356'")
-    p_prompt.add_argument("--transcript_file", required=True, help="Path to the local .vtt or .txt transcript file.")
-    p_prompt.add_argument("--json_file", help="Path to the JSON database file. Defaults to the internal path.")
-    p_prompt.set_defaults(func=cmd_generate_prompt)
-
+    parser = argparse.ArgumentParser(description="Podcast processing tools")
+    subparsers = parser.add_subparsers(dest="command")
+    
+    # Parse episode
+    parse_parser = subparsers.add_parser("parse-episode")
+    parse_parser.add_argument("--vimeo_url", required=True)
+    parse_parser.set_defaults(func=cmd_parse_episode)
+    
+    # Get transcript (now uses saved state)
+    transcript_parser = subparsers.add_parser("get-transcript")
+    transcript_parser.add_argument("--episode_id", help="Optional if state exists")
+    transcript_parser.set_defaults(func=cmd_get_transcript)
+    
+    # Generate prompt (uses saved state)
+    prompt_parser = subparsers.add_parser("generate-prompt")
+    prompt_parser.add_argument("--episode_id", help="Optional if state exists")
+    prompt_parser.add_argument("--transcript_file", help="Optional if state exists")
+    prompt_parser.add_argument("--json_file", help="Optional JSON database file")
+    prompt_parser.set_defaults(func=cmd_generate_prompt)
+    
     args = parser.parse_args()
-
-    if args.command == "parse-episode":
-        cmd_parse_episode(args)
-    elif args.command == "get-transcript":
-        cmd_get_transcript(args)
-    elif args.command == "generate-prompt":
-        cmd_generate_prompt(args)
+    if args.command:
+        args.func(args)
     else:
         parser.print_help()
 
