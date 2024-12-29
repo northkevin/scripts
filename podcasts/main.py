@@ -4,10 +4,13 @@ import argparse
 import os
 import json
 from pathlib import Path
+import logging
 
 from fetch_vimeo import get_vimeo_data_headless
 from transcript_utils import download_vtt_file
 from generate_prompt import generate_prompt
+from fetch_youtube import YouTubeFetcher
+from config import Config
 
 # ------------------------------------------------------------
 # Paths & State Management
@@ -37,13 +40,35 @@ EPISODE_SCHEMA = {
     "transcript_file": ""
 }
 
-def save_state(episode_id=None, transcript_file=None, metadata=None):
-    """Save current episode state to help track progress between commands"""
-    PODCAST_DATA.mkdir(exist_ok=True)
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger("podcast_cli")
+
+def get_state_file(platform_type: str = None) -> Path:
+    """Get appropriate state file based on platform"""
+    if platform_type == "youtube":
+        return Config.YOUTUBE_STATE
+    elif platform_type == "vimeo":
+        return Config.VIMEO_STATE
+    else:
+        # Try to detect from existing state files
+        if os.path.exists(Config.YOUTUBE_STATE):
+            return Config.YOUTUBE_STATE
+        if os.path.exists(Config.VIMEO_STATE):
+            return Config.VIMEO_STATE
+        # Default to YouTube if can't determine
+        return Config.YOUTUBE_STATE
+
+def save_state(platform_type: str = None, episode_id=None, transcript_file=None, metadata=None):
+    """Save current episode state to platform-specific state file"""
+    state_file = get_state_file(platform_type)
+    state_file.parent.mkdir(exist_ok=True)
     
     state = {}
-    if os.path.exists(STATE_FILE):
-        with open(STATE_FILE) as f:
+    if os.path.exists(state_file):
+        with open(state_file) as f:
             state = json.load(f)
     
     if episode_id:
@@ -53,13 +78,14 @@ def save_state(episode_id=None, transcript_file=None, metadata=None):
     if metadata:
         state["metadata"] = metadata
         
-    with open(STATE_FILE, 'w') as f:
+    with open(state_file, 'w') as f:
         json.dump(state, f, indent=2)
 
-def get_state():
-    """Get current episode state"""
-    if os.path.exists(STATE_FILE):
-        with open(STATE_FILE) as f:
+def get_state(platform_type: str = None) -> dict:
+    """Get current episode state from appropriate platform file"""
+    state_file = get_state_file(platform_type)
+    if os.path.exists(state_file):
+        with open(state_file) as f:
             return json.load(f)
     return {}
 
@@ -127,9 +153,14 @@ def cmd_parse_episode(args):
         
         # Create metadata using schema
         metadata = create_episode_metadata(video_id, data)
+        metadata["platform_type"] = "vimeo"  # Add platform type
         
         # Save state and database
-        save_state(episode_id=video_id, metadata=metadata)
+        save_state(
+            platform_type="vimeo",
+            episode_id=video_id,
+            metadata=metadata
+        )
         save_to_database(metadata)
         
         print("\nEpisode Info:")
@@ -185,42 +216,113 @@ def cmd_get_transcript(args):
     except Exception as e:
         print(f"Error: {e}")
 
+def get_transcript_path(episode_id: str, platform_type: str = None) -> Path:
+    """Get the appropriate transcript path based on platform"""
+    if platform_type == "youtube":
+        return Config.YOUTUBE_TRANSCRIPTS / f"{episode_id}_transcript.vtt"
+    else:
+        return Config.VIMEO_TRANSCRIPTS / f"{episode_id}_transcript.vtt"
+
+def get_prompt_file(platform_type: str = None) -> Path:
+    """Get path for saving the generated prompt"""
+    if platform_type == "youtube":
+        return Config.YOUTUBE_DIR / "current_episode_prompt.txt"
+    else:
+        return Config.VIMEO_DIR / "current_episode_prompt.txt"
+
 def cmd_generate_prompt(args):
     """Generate ChatGPT prompt using saved state"""
     state = get_state()
     episode_id = args.episode_id or state.get("episode_id")
-    transcript_file = args.transcript_file or state.get("transcript_file")
+    transcript_file = args.transcript_file
+    platform_type = state.get("metadata", {}).get("platform_type")
     
-    # Try to use provided JSON file, then default database, then state
-    json_file = args.json_file or DEFAULT_DB_FILE
+    # Try to use provided JSON file, then default database
+    json_file = args.json_file or Config.DATABASE
     
     if not episode_id:
         print("Error: No episode_id provided or found in state")
-        print("Hint: Run 'parse-episode' first or provide --episode_id")
+        print("Hint: First run either:")
+        print("- parse-youtube for YouTube videos")
+        print("- parse-episode for Vimeo videos")
         return
-        
+    
+    # If no transcript file provided, check platform-specific location
     if not transcript_file:
-        print("Error: No transcript file found in state")
-        print(f"Hint: Run 'get-transcript --episode_id {episode_id}' first")
-        print("      or provide --transcript_file manually")
-        return
+        transcript_file = str(get_transcript_path(episode_id, platform_type))
     
     if not os.path.exists(transcript_file):
         print(f"Error: Transcript file not found: {transcript_file}")
-        print(f"Hint: Check if the file exists or run 'get-transcript' again")
+        print("\nHint: Check these locations:")
+        print(f"YouTube: {Config.YOUTUBE_TRANSCRIPTS}/{episode_id}_transcript.vtt")
+        print(f"Vimeo: {Config.VIMEO_TRANSCRIPTS}/{episode_id}_transcript.vtt")
         return
-        
+    
     try:
+        # Generate the prompt
         prompt = generate_prompt(episode_id, transcript_file, json_file)
-        print("\n--- ChatGPT Prompt ---\n")
-        print(prompt)
-        print("\n-----------------------")
+        
+        # Save to platform-specific output file
+        prompt_file = get_prompt_file(platform_type)
+        with open(prompt_file, 'w') as f:
+            f.write(prompt)
+        
+        print("\nPrompt generated successfully!")
+        print(f"Saved to: {prompt_file}")
+        print("\nPreview (first 500 chars):")
+        print("-" * 40)
+        print(prompt[:500] + "...")
+        print("-" * 40)
+        print(f"\nFull prompt available in: {prompt_file}")
+        
     except Exception as e:
         print(f"Error: {e}")
-        print("Hint: Make sure you've completed the previous steps:")
-        print("1. parse-episode - to get episode metadata")
-        print("2. get-transcript - to download the transcript")
-        print(f"3. Check that episode exists in database: {json_file}")
+        print("\nHint: Make sure you've completed these steps:")
+        if platform_type == "youtube":
+            print("1. Run parse-youtube to get video data and transcript")
+        else:
+            print("1. Run parse-episode to get video data")
+            print("2. Run get-transcript to download the transcript")
+        print(f"\nThen check that episode exists in: {json_file}")
+
+def cmd_parse_youtube(args):
+    """Parse YouTube video and download transcript"""
+    try:
+        fetcher = YouTubeFetcher(
+            Config.YOUTUBE_TRANSCRIPTS,
+            api_key=os.getenv('YOUTUBE_API_KEY')
+        )
+        metadata = fetcher.get_video_data(args.url)
+        
+        if not metadata:
+            raise Exception("Failed to get video metadata")
+        
+        # Save to platform-specific state
+        save_state(
+            platform_type="youtube",
+            episode_id=metadata["episode_id"],
+            metadata=metadata
+        )
+        save_to_database(metadata)
+        
+        print("\nVideo Info:")
+        print(f"ID: {metadata['episode_id']}")
+        print(f"Title: {metadata.get('title', 'Unknown')}")
+        print(f"Channel: {metadata.get('podcast_name', 'Unknown')}")
+        
+        if metadata.get("transcript_file"):
+            print(f"\nTranscript saved to: {metadata['transcript_file']}")
+            print("\nRun next command to generate prompt:")
+            print("python main.py generate-prompt")
+        else:
+            print("\nNo transcript available for this video")
+            
+    except Exception as e:
+        print(f"Error: {e}")
+        if args.debug:
+            import traceback
+            print("\nFull traceback:")
+            print(traceback.format_exc())
 
 def main():
     parser = argparse.ArgumentParser(description="Podcast processing tools")
@@ -242,6 +344,21 @@ def main():
     prompt_parser.add_argument("--transcript_file", help="Optional if state exists")
     prompt_parser.add_argument("--json_file", help="Optional JSON database file")
     prompt_parser.set_defaults(func=cmd_generate_prompt)
+    
+    # Parse YouTube
+    youtube_parser = subparsers.add_parser("parse-youtube",
+        help="Parse YouTube video and download transcript")
+    youtube_parser.add_argument("--url", required=True,
+        help="YouTube video URL")
+    youtube_parser.add_argument("--debug", action="store_true",
+        help="Run in debug mode (shows browser)")
+    youtube_parser.add_argument("--initial-wait", type=int, default=10,
+        help="Initial page load wait time in seconds")
+    youtube_parser.add_argument("--element-wait", type=int, default=5,
+        help="Wait time for individual elements in seconds")
+    youtube_parser.add_argument("--retries", type=int, default=3,
+        help="Number of retry attempts")
+    youtube_parser.set_defaults(func=cmd_parse_youtube)
     
     args = parser.parse_args()
     if args.command:

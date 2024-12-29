@@ -1,4 +1,5 @@
 import json
+import os
 
 def load_json_data(json_file_path):
     """
@@ -27,97 +28,89 @@ def find_episode_by_id(json_file_path, episode_id):
     episodes = load_json_data(json_file_path)
     return next((ep for ep in episodes if ep.get("episode_id") == episode_id), None)
 
-def generate_prompt(episode_id, transcript_file, json_file):
-    """Generate ChatGPT prompt for completing episode metadata"""
-    episode = find_episode_by_id(json_file, episode_id)
+def generate_prompt(episode_id: str, transcript_file: str, json_file: str) -> str:
+    """Generate a ChatGPT prompt for claims analysis"""
     
-    prompt = f"""
-You are an AI assistant helping to process podcast episode metadata. I need you to analyze a transcript and complete the episode information.
+    # Load episode data
+    with open(json_file) as f:
+        episodes = json.load(f)
+        
+    episode = next((ep for ep in episodes if ep["episode_id"] == episode_id), None)
+    if not episode:
+        raise Exception(f"Episode {episode_id} not found in database")
+    
+    # Get just the filename from the path
+    transcript_filename = os.path.basename(transcript_file)
+    
+    # Create platform-specific prompt
+    if episode.get("platform_type") == "youtube":
+        prompt = f"""Please analyze this YouTube podcast episode:
 
-Current partial metadata:
-{json.dumps(episode, indent=2)}
+Title: {episode['title']}
+Channel: {episode['podcast_name']}
+URL: {episode['share_url']}
 
-The transcript file is: '{transcript_file}'
+Using the transcript from file: {transcript_filename}
 
-IMPORTANT INSTRUCTIONS:
-1. First, identify and note the total duration of the transcript (HH:MM:SS)
-2. Analyze the ENTIRE transcript from beginning to end
-3. Ensure your analysis covers the full timeline of the conversation
-4. Claims should be distributed across different segments of the episode
-5. Avoid clustering all claims from a single portion of the transcript
+Instructions:
+1. Read the transcript carefully and analyze the full content
+2. Respond with ONLY a single ```json codeblock
+3. Keep all existing values - only fill in empty fields
+4. Format timestamps as "HH:MM:SS"
+5. For claims analysis, follow these guidelines:
+   - Extract 8-20 claims based on content density
+   - Include ONLY significant, unique, or noteworthy statements
+   - Avoid redundant or minor points
+   - Each claim should represent a distinct idea or insight
+   - Use these filter categories:
+     * "key point" - Core facts or main arguments
+     * "unique perspective" - Novel viewpoints or interpretations
+     * "groundbreaking idea" - Innovative or controversial concepts
 
-CLAIMS GUIDELINES:
-- Extract 8-20 claims based on content density
-- Include significant statements from throughout the episode
-- Distribute claims across early, middle, and late segments
-- Each claim should represent a distinct idea or insight
-- Use these filter categories:
-  * "key point" - Core facts or main arguments
-  * "unique perspective" - Novel viewpoints or interpretations
-  * "groundbreaking idea" - Innovative or controversial concepts
-
-QUALITY CRITERIA:
-- Quality over quantity: 8-20 claims depending on content density
-- Each claim should be substantial and non-redundant
-- Claims should represent the full scope of the conversation
-- Timestamps should show coverage across the episode duration
-- If the episode is lengthy (>1 hour), ensure later segments are analyzed
+   Quality over quantity: If the episode has fewer than 8 truly significant claims,
+   that's fine. If it's packed with unique insights, include up to 20.
+   Each claim should be substantial enough to warrant inclusion in a summary
+   of the episode's key takeaways.
 
 Required fields to complete:
 - interviewee.name: Full name from transcript
 - interviewee.profession: Main profession/title
 - interviewee.organization: Current organization
 - summary: 2-3 sentence episode overview
-- claims: 8-20 significant statements with distributed timestamps
-- related_topics: 5-10 main subjects discussed (from full episode)
-- tags: 5-10 searchable keywords (reflecting complete content)
-- duration: Total length of transcript (HH:MM:SS format)
+- claims: 8-20 significant, non-redundant statements with timestamps
+- related_topics: 5-10 main subjects discussed
+- tags: 5-10 searchable keywords
 
-Copy this template and fill in the empty fields:
-
-```json
+Format your response as JSON matching this structure:
 {{
-  "episode_id": "{episode['episode_id']}",
-  "title": "{episode['title']}",
-  "share_url": "{episode['share_url']}",
-  "podcast_name": "{episode['podcast_name']}",
-  "interviewee": {{
-    "name": "",
-    "profession": "",
-    "organization": ""
-  }},
-  "air_date": "{episode['air_date']}",
-  "duration": "",
-  "summary": "",
-  "claims": [
-    {{
-      "claim_id": "1",
-      "claim": "",
-      "timestamp": "HH:MM:SS",
-      "filter": "key point|unique perspective|groundbreaking idea",
-      "segment": "early|middle|late"
-    }}
-  ],
-  "related_topics": [],
-  "tags": [],
-  "webvtt_link": "{episode.get('webvtt_link', '')}",
-  "transcript_file": "{episode.get('transcript_file', '')}"
-}}
-```
+    "interviewee": {{
+        "name": "Full Name",
+        "profession": "Their Role",
+        "organization": "Their Organization"
+    }},
+    "summary": "2-3 sentence episode overview...",
+    "claims": [
+        {{
+            "claim_id": "1",
+            "claim": "The specific claim or insight",
+            "timestamp": "HH:MM:SS",
+            "filter": "key point|unique perspective|groundbreaking idea",
+            "segment": "early|middle|late"
+        }}
+    ],
+    "related_topics": ["topic1", "topic2", "topic3", "topic4", "topic5"],
+    "tags": ["tag1", "tag2", "tag3", "tag4", "tag5"]
+}}"""
 
-VALIDATION REQUIREMENTS:
-1. Claims must include timestamps from all thirds of the episode
-2. At least 20% of claims should come from the final third
-3. No more than 40% of claims should come from any single third
-4. Added "segment" field to help verify distribution
-5. Include total duration to validate coverage
+    else:  # Vimeo
+        prompt = f"""Please analyze this podcast episode:
 
-RESPONSE FORMAT:
-1. Start with ```json
-2. Paste and complete the template above
-3. End with ```
-4. No other text or explanations needed
+Title: {episode['title']}
+Show: {episode['podcast_name']}
+URL: {episode['share_url']}
 
-Your response should be a single JSON code block that can be directly copied to update our database.
-"""
-    return prompt.strip()
+Using the transcript from file: {transcript_filename}
+
+[Same detailed instructions as YouTube version...]"""
+
+    return prompt
