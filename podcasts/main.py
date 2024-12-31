@@ -5,14 +5,16 @@ import os
 from datetime import datetime
 import json
 from pathlib import Path
+import logging
 
 from config import Config
 from fetch_youtube import YouTubeFetcher
-from fetch_vimeo import get_vimeo_data_headless, create_episode_metadata
+from fetch_vimeo import process_vimeo_transcript, get_vimeo_data_headless, create_episode_metadata
 from generate_markdown import MarkdownGenerator
 from podcast_list import PodcastList, save_state, get_state
-from id_generator import PodcastID, IDGenerator
-from fetch_vimeo import download_vtt_file
+
+logger = logging.getLogger(__name__)
+
 def process_youtube_transcript(entry) -> Path:
     """Process YouTube transcript"""
     fetcher = YouTubeFetcher(
@@ -27,44 +29,12 @@ def process_youtube_transcript(entry) -> Path:
     
     # Rename the transcript file to use episode_id
     old_path = Path(metadata['transcript_file'])
-    new_path = Config.TRANSCRIPTS_DIR / f"{entry.episode_id}_transcript.vtt"
+    new_path = Config.TRANSCRIPTS_DIR / f"{entry.episode_id}_transcript.md"
     
     if old_path.exists():
         old_path.rename(new_path)
     
     return new_path
-
-def process_vimeo_transcript(entry) -> Path:
-    """Process Vimeo transcript"""
-    data = get_vimeo_data_headless(entry.url)
-    metadata = create_episode_metadata(
-        data["playerConfig"]["video"]["id"],
-        data
-    )
-    
-    if not metadata.get('transcript_info'):
-        raise Exception("No transcript available for this video")
-    
-    # Download transcript
-    transcript_path = Config.TRANSCRIPTS_DIR / f"{entry.episode_id}_transcript.vtt"
-    webvtt_link = metadata['webvtt_link']
-    
-    # Use the function from fetch_vimeo
-    download_vtt_file(webvtt_link, transcript_path)
-    
-    return transcript_path
-
-def generate_episode_markdown(entry) -> Path:
-    """Generate episode markdown file"""
-    generator = MarkdownGenerator()
-    markdown = generator.generate_episode_markdown(entry)
-    return generator.save_markdown(entry.episode_id, markdown, 'episode')
-
-def generate_claims_markdown(entry) -> Path:
-    """Generate claims markdown file"""
-    generator = MarkdownGenerator()
-    markdown = generator.generate_claims_markdown(entry)
-    return generator.save_markdown(entry.episode_id, markdown, 'claims')
 
 def cmd_add_podcast(args):
     """Add new podcast to master list"""
@@ -99,8 +69,9 @@ def cmd_add_podcast(args):
 def cmd_process_podcast(args):
     """Process podcast content"""
     try:
-        # Initialize podcast list
+        # Initialize podcast list and markdown generator
         podcast_list = PodcastList()
+        markdown_gen = MarkdownGenerator()
         
         # Get entry
         entry = podcast_list.get_entry(args.episode_id)
@@ -111,7 +82,7 @@ def cmd_process_podcast(args):
         save_state(args.episode_id)
         
         try:
-            # Generate transcript
+            # Generate transcript based on platform
             if entry.platform == "youtube":
                 transcript_file = process_youtube_transcript(entry)
             else:
@@ -124,14 +95,14 @@ def cmd_process_podcast(args):
             )
             
             # Generate episode markdown
-            episode_file = generate_episode_markdown(entry)
+            episode_file = markdown_gen.generate_episode_markdown(entry)
             podcast_list.update_entry(
                 args.episode_id,
                 episodes_file=str(episode_file)
             )
             
             # Generate claims markdown
-            claims_file = generate_claims_markdown(entry)
+            claims_file = markdown_gen.generate_claims_markdown(entry)
             podcast_list.update_entry(
                 args.episode_id,
                 claims_file=str(claims_file)
@@ -164,9 +135,7 @@ def cleanup_episode(episode_id: str):
         files_to_remove = [
             Path(entry.episodes_file) if entry.episodes_file else None,
             Path(entry.claims_file) if entry.claims_file else None,
-            Path(entry.transcripts_file) if entry.transcripts_file else None,
-            Config.TRANSCRIPTS_DIR / f"{episode_id}_transcript.vtt",  # New standard format
-            Config.YOUTUBE_TRANSCRIPTS / f"{episode_id}_transcript.vtt",  # Backup location
+            Config.TRANSCRIPTS_DIR / f"{episode_id}_transcript.md"
         ]
         
         for file_path in files_to_remove:
@@ -190,27 +159,40 @@ def cleanup_episode(episode_id: str):
 
 def main():
     parser = argparse.ArgumentParser(description="Podcast processing tools")
+    
+    # Add debug flag at the top level
+    parser.add_argument('--debug', action='store_true', help='Enable debug logging')
+    
+    # Create subparsers
     subparsers = parser.add_subparsers(dest="command")
     
     # Add podcast
     add_parser = subparsers.add_parser("add-podcast")
     add_parser.add_argument("--platform", required=True, choices=["youtube", "vimeo"])
     add_parser.add_argument("--url", required=True)
-    add_parser.set_defaults(func=cmd_add_podcast)
     
     # Process podcast
     process_parser = subparsers.add_parser("process-podcast")
     process_parser.add_argument("--episode_id", required=True)
-    process_parser.set_defaults(func=cmd_process_podcast)
     
     # Cleanup podcast
     cleanup_parser = subparsers.add_parser("cleanup-podcast")
     cleanup_parser.add_argument("--episode_id", required=True)
-    cleanup_parser.set_defaults(func=lambda args: cleanup_episode(args.episode_id))
     
     args = parser.parse_args()
+    
+    # Configure logging based on debug flag
+    if args.debug:
+        logging.basicConfig(level=logging.DEBUG)
+        logger.setLevel(logging.DEBUG)
+    
     if args.command:
-        args.func(args)
+        if args.command == "add-podcast":
+            cmd_add_podcast(args)
+        elif args.command == "process-podcast":
+            cmd_process_podcast(args)
+        elif args.command == "cleanup-podcast":
+            cleanup_episode(args.episode_id)
     else:
         parser.print_help()
 

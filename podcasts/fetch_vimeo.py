@@ -204,31 +204,57 @@ def create_episode_metadata(video_id: str, data: Dict) -> Dict[str, Any]:
         
     return metadata
 
-def download_vtt_file(url: str, output_path: Path) -> None:
-    """Download VTT file from URL and save to output path"""
-    logger.debug(f"Downloading VTT file from: {url}")
-    logger.debug(f"Saving to: {output_path}")
+def convert_vtt_to_markdown(vtt_path: Path) -> Path:
+    """Convert VTT file to Markdown format"""
+    logger.debug(f"Converting VTT to Markdown: {vtt_path}")
+    
+    md_path = vtt_path.with_suffix('.md')
+    md_content = ["# Transcript\n\n"]
     
     try:
-        response = requests.get(url)
-        response.raise_for_status()
-        
-        with open(output_path, 'wb') as f:
-            f.write(response.content)
+        with open(vtt_path, 'r', encoding='utf-8') as vtt:
+            lines = vtt.readlines()
             
-        logger.debug("VTT file downloaded successfully")
+        # Skip the VTT header
+        start_idx = 0
+        for i, line in enumerate(lines):
+            if line.strip() == "":
+                start_idx = i + 1
+                break
         
-    except requests.RequestException as e:
-        logger.error(f"Failed to download VTT file: {str(e)}")
-        raise Exception(f"Failed to download transcript: {str(e)}")
+        current_text = []
+        for line in lines[start_idx:]:
+            line = line.strip()
+            
+            # Skip timestamp lines and empty lines
+            if not line or '-->' in line or line.replace('-', '').isnumeric():
+                if current_text:
+                    md_content.append(' '.join(current_text) + '\n\n')
+                    current_text = []
+                continue
+                
+            current_text.append(line)
+        
+        # Add any remaining text
+        if current_text:
+            md_content.append(' '.join(current_text) + '\n\n')
+        
+        # Write markdown file
+        with open(md_path, 'w', encoding='utf-8') as md:
+            md.writelines(md_content)
+        
+        logger.debug(f"Created Markdown file: {md_path}")
+        return md_path
+        
+    except Exception as e:
+        logger.error(f"Failed to convert VTT to Markdown: {str(e)}")
+        raise
 
 def process_vimeo_transcript(entry) -> Path:
     """Process Vimeo transcript"""
     logger.debug("Starting Vimeo transcript processing for entry: %s", entry.episode_id)
     
     data = get_vimeo_data_headless(entry.url)
-    logger.debug("Retrieved Vimeo data, video ID: %s", data["playerConfig"]["video"]["id"])
-    
     metadata = create_episode_metadata(
         data["playerConfig"]["video"]["id"],
         data
@@ -236,14 +262,54 @@ def process_vimeo_transcript(entry) -> Path:
     
     if not metadata.get('webvtt_link'):
         logger.error("No webvtt_link found in metadata")
-        logger.debug("Full metadata: %s", json.dumps(metadata, indent=2))
         raise Exception("No transcript available for this video")
     
-    # Download transcript
-    transcript_path = Config.TRANSCRIPTS_DIR / f"{entry.episode_id}_transcript.vtt"
-    logger.debug("Will save transcript to: %s", transcript_path)
+    # Save directly as markdown file
+    transcript_path = Config.TRANSCRIPTS_DIR / f"{entry.episode_id}_transcript.md"
+    logger.debug(f"Will save transcript to: {transcript_path}")
     
-    # Download the VTT file
-    download_vtt_file(metadata['webvtt_link'], transcript_path)
-    
-    return transcript_path
+    try:
+        # Download VTT content
+        response = requests.get(metadata['webvtt_link'])
+        response.raise_for_status()
+        vtt_content = response.text
+        logger.debug("Successfully downloaded VTT content")
+        
+        # Convert to markdown
+        md_content = ["# Transcript\n\n"]
+        lines = vtt_content.splitlines()
+        
+        # Skip the VTT header
+        start_idx = 0
+        for i, line in enumerate(lines):
+            if line.strip() == "":
+                start_idx = i + 1
+                break
+        
+        current_text = []
+        for line in lines[start_idx:]:
+            line = line.strip()
+            
+            # Skip timestamp lines and empty lines
+            if not line or '-->' in line or line.replace('-', '').isnumeric():
+                if current_text:
+                    md_content.append(' '.join(current_text) + '\n\n')
+                    current_text = []
+                continue
+                
+            current_text.append(line)
+        
+        # Add any remaining text
+        if current_text:
+            md_content.append(' '.join(current_text) + '\n\n')
+        
+        # Write markdown file
+        with open(transcript_path, 'w', encoding='utf-8') as f:
+            f.writelines(md_content)
+        
+        logger.debug(f"Saved transcript as markdown: {transcript_path}")
+        return transcript_path
+        
+    except Exception as e:
+        logger.error(f"Failed to process transcript: {str(e)}")
+        raise
