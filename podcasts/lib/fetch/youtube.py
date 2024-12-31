@@ -15,6 +15,8 @@ logger = logging.getLogger(__name__)
 
 def get_youtube_transcript(url: str) -> str:
     """Get transcript from YouTube video"""
+    logger.debug(f"Fetching transcript for URL: {url}")
+    
     # Extract video ID using regex directly
     patterns = [
         r'(?:youtube\.com/watch\?v=|youtu\.be/)([^&\n?#]+)',
@@ -32,10 +34,38 @@ def get_youtube_transcript(url: str) -> str:
     if not video_id:
         raise ValueError(f"Could not extract video ID from URL: {url}")
     
+    logger.debug(f"Extracted video ID: {video_id}")
+    
     try:
         transcript_list = YouTubeTranscriptApi.get_transcript(video_id)
-        return "\n".join(f"{item['text']}" for item in transcript_list)
+        
+        # Debug: Save raw API response (keep this)
+        debug_file = Config.DIST_DIR / f"{video_id}_raw_api_response.txt"
+        with open(debug_file, 'w', encoding='utf-8') as f:
+            f.write("Raw YouTube Transcript API Response:\n")
+            f.write("=" * 50 + "\n\n")
+            json.dump(transcript_list, f, indent=2)
+            
+        # Format as structured markdown with timestamps
+        formatted_lines = ["# Transcript\n"]
+        formatted_lines.append(f"```{Config.TRANSCRIPT_CODE_BLOCK}")
+        
+        for item in transcript_list:
+            start_time = f"{int(item['start']//3600):02d}:{int((item['start']%3600)//60):02d}:{item['start']%60:06.3f}"
+            end_time = f"{int((item['start']+item['duration'])//3600):02d}:{int(((item['start']+item['duration'])%3600)//60):02d}:{(item['start']+item['duration'])%60:06.3f}"
+            
+            formatted_lines.extend([
+                f"\n[{start_time} --> {end_time}]",
+                f"{item['text']}"
+            ])
+            
+        formatted_lines.append("\n```\n")  # Close code block
+        formatted_text = "\n".join(formatted_lines)
+        
+        return formatted_text
+        
     except Exception as e:
+        logger.error(f"Error fetching transcript: {str(e)}")
         raise ValueError(f"Could not get transcript: {str(e)}")
 
 

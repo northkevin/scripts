@@ -12,33 +12,30 @@ def generate_analysis_prompt(
     share_url: str,
     transcript_filename: str,
     platform_type: str,
-    date: str = None,
     interviewee: Dict = None
 ) -> str:
     """Generate a ChatGPT prompt for podcast analysis in Obsidian format"""
     
-    prompt = f"""Analyze this podcast transcript and generate a structured note. IMPORTANT: Read the ENTIRE transcript before beginning analysis.
+    prompt = f"""Analyze this timestamped podcast transcript and generate a structured note. IMPORTANT: Read the ENTIRE transcript before beginning analysis.
 
 FORMATTING REQUIREMENTS:
 - Use #tags for topics and themes
 - Use **bold** for emphasis
-- Use > [!quote] for quotes
-- Follow heading hierarchy (## and ###)
-- Follow Obsidian markdown rules, which supports CommonMark, GitHub Flavored Markdown, and LaTeX. Obsidian does not support using Markdown formatting or blank lines inside of HTML tags.
+- Include timestamps (HH:MM:SS) where relevant
+- Maintain consistent list spacing
 
 REQUIRED SECTIONS (in order):
 
 1. QUOTES (EXACTLY 3)
-> [!quote] Speaker Name
-> "Direct quote text"
-> - Impact: [One sentence on emotional/intellectual significance]
-> #relevant-tag
+Select quotes that represent:
+- A paradigm-shifting statement
+- An emotionally resonant insight
+- A controversial claim
+Format each as:
+> [!quote] "Quote text" - Speaker (HH:MM)
+> #relevant-tags
 
-Requirements:
-- Quote 1: Most paradigm-shifting statement
-- Quote 2: Highest emotional impact moment
-- Quote 3: Most controversial claim
-NO CONTEXT NEEDED - let quotes speak for themselves
+NO CONTEXT OR IMPACT STATEMENT NEEDED - let quotes speak for themselves
 
 2. OVERVIEW (2-3 SENTENCES ONLY)
 - Core topic/thesis
@@ -48,49 +45,51 @@ NO CONTEXT NEEDED - let quotes speak for themselves
 3. CLAIMS (CRITICAL - 10 TARGET)
 Each claim must be:
 - Unique & substantial (no repetition)
+- Listed chronologically as they appear in transcript
+- Balanced between all major themes of the episode
 - Supported by transcript evidence
 - Tagged with #type and #topic
 Aim for 10 claims - fewer only if transcript lacks substance
 
-4. REFERENCES (ALL REQUIRED)
+4. FLOW
+Three key phases:
+**Opening**: Initial context and foundational concepts
+**Development**: Core arguments and evidence
+**Conclusion**: Synthesis and implications
+
+5. REFERENCES (ALL REQUIRED)
 Books:
-- **Title** by Author ([Year/Century])
-  - Context: [Brief relevance to discussion]
+- **Title** by Author (Year)
+  - Context: How/why mentioned (HH:MM:SS)
   #book #author-[lastname] #century-[xx]
 
 People:
-- **Name** - Role/Position
-  - Contribution: [Specific impact/insight]
+- **Name** - Role/Position (Year)
+  - Contribution: Specific relevance (HH:MM:SS)
   #person #field-[area] #century-[xx]
 
 Technologies:
 - **[Name]**
-  - Purpose: [Brief description]
-  - Impact: [Relevance to discussion]
+  - Purpose: Brief description
+  - Context: Role in discussion (HH:MM:SS)
   #technology #field-[area] #century-[xx]
 
-5. FLOW (ONE LINE EACH)
-**Opening**: [Main topics introduced]
-**Development**: [How topics evolved]
-**Conclusion**: [Final insights]
-
-6. TERMS (ALL TECHNICAL TERMS)
-- **Term**
-  - Definition
-  - Significance
+6. TERMS
+Define technical terms in order of appearance:
+- **Term** [First mentioned at HH:MM:SS]
+  - Definition: Clear explanation
   #technical-term
 
-FINAL TAGS:
-Add general episode descriptors only:
-#podcast #{platform_type} #[main-topic] #[secondary-topic]
-(Note: Use only for overall episode themes not already tagged above)
+7. TAGS
+#podcast #{platform_type} #[main-topic] #[secondary-topics]
 
 VALIDATION CHECKLIST:
 □ Read entire transcript first
+□ Included timestamps for key moments
 □ 3 impactful quotes (paradigm-shift, emotional, controversial)
-□ 10 claims (or justified fewer)
+□ 10 claims (or justified fewer) in chronological order
 □ ALL references with temporal context
-□ ALL technical terms with clear definitions"""
+□ Technical terms with first appearance time"""
 
     return prompt
 

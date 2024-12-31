@@ -168,6 +168,10 @@ def create_episode_metadata(video_id: str, data: Dict[str, Any]) -> Dict[str, An
             logger.debug("Found track URL: %s", track_url)
             
             if "/texttrack/" in track_url:
+                # Ensure URL has scheme
+                if not track_url.startswith(('http://', 'https://')):
+                    track_url = f"https:{track_url}" if track_url.startswith('//') else f"https://{track_url}"
+                
                 texttrack_id = track_url.split("/texttrack/")[1].split(".")[0]
                 token = track_url.split("token=")[1] if "token=" in track_url else None
                 logger.debug("Extracted texttrack_id: %s, token: %s", texttrack_id, token)
@@ -176,8 +180,7 @@ def create_episode_metadata(video_id: str, data: Dict[str, Any]) -> Dict[str, An
                     "texttrack_id": texttrack_id,
                     "token": token
                 }
-                # Use the full player.vimeo.com URL
-                metadata["webvtt_link"] = f"https://player.vimeo.com{track_url}"
+                metadata["webvtt_link"] = track_url
                 logger.debug("Created webvtt_link: %s", metadata["webvtt_link"])
     else:
         logger.warning("No text_tracks found in playerConfig.request")
@@ -203,49 +206,41 @@ def process_vimeo_transcript(entry) -> Path:
         raise Exception("No transcript available for this video")
     
     # Save directly as markdown file
-    transcript_path = Config.TRANSCRIPTS_DIR / f"{entry.episode_id}_transcript.md"
+    transcript_path = Config.get_transcript_path(entry.episode_id)
     logger.debug(f"Will save transcript to: {transcript_path}")
     
     try:
-        # Download VTT content
         response = requests.get(metadata['webvtt_link'])
         response.raise_for_status()
         vtt_content = response.text
-        logger.debug("Successfully downloaded VTT content")
         
-        # Convert to markdown
-        md_content = ["# Transcript\n\n"]
+        formatted_lines = ["# Transcript\n"]
+        formatted_lines.append(f"```{Config.TRANSCRIPT_CODE_BLOCK}")
+        
         lines = vtt_content.splitlines()
         
-        # Skip the VTT header
+        # Skip the WEBVTT header
         start_idx = 0
         for i, line in enumerate(lines):
             if line.strip() == "":
                 start_idx = i + 1
                 break
         
-        current_text = []
+        # Process content preserving timestamps
         for line in lines[start_idx:]:
             line = line.strip()
             
-            # Skip timestamp lines and empty lines
-            if not line or '-->' in line or line.replace('-', '').isnumeric():
-                if current_text:
-                    md_content.append(' '.join(current_text) + '\n\n')
-                    current_text = []
-                continue
-                
-            current_text.append(line)
+            if '-->' in line:  # Timestamp line
+                formatted_lines.append(f"\n[{line}]")
+            elif line and not line.replace('-', '').isnumeric():
+                formatted_lines.append(line)
         
-        # Add any remaining text
-        if current_text:
-            md_content.append(' '.join(current_text) + '\n\n')
+        formatted_lines.append("\n```")
         
         # Write markdown file
         with open(transcript_path, 'w', encoding='utf-8') as f:
-            f.writelines(md_content)
+            f.write('\n'.join(formatted_lines))
         
-        logger.debug(f"Saved transcript as markdown: {transcript_path}")
         return transcript_path
         
     except Exception as e:

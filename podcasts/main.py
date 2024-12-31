@@ -18,11 +18,18 @@ logger = logging.getLogger(__name__)
 def process_youtube_transcript(entry) -> Path:
     """Process YouTube transcript"""
     try:
-        # Use the standalone function instead of creating a new YouTubeFetcher
         transcript_text = get_youtube_transcript(entry.url)
         
-        # Save transcript to file
-        transcript_file = Config.TRANSCRIPTS_DIR / f"{entry.episode_id}_transcript.md"
+        # Debug: Save raw transcript data
+        debug_file = Config.DIST_DIR / f"{entry.episode_id}_raw_transcript_debug.txt"
+        with open(debug_file, 'w', encoding='utf-8') as f:
+            f.write(f"Debug Output for {entry.url}\n")
+            f.write("=" * 50 + "\n\n")
+            f.write(transcript_text)
+        logger.debug(f"Saved raw transcript debug data to: {debug_file}")
+        
+        # Save transcript using config path
+        transcript_file = Config.get_transcript_path(entry.episode_id)
         with open(transcript_file, 'w', encoding='utf-8') as f:
             f.write(transcript_text)
         

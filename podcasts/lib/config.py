@@ -25,6 +25,10 @@ class Config:
     EPISODES_DIR = OBSIDIAN_PODCASTS / "Episodes"
     TRANSCRIPTS_DIR = OBSIDIAN_PODCASTS / "Transcripts"
     
+    # File extensions and formats
+    TRANSCRIPT_FILE_EXT = ".md"
+    TRANSCRIPT_CODE_BLOCK = "timestamp-transcript"
+    
     @classmethod
     def ensure_dirs(cls):
         """Create all necessary directories"""
@@ -47,6 +51,11 @@ class Config:
                 if not dir.exists():
                     dir.mkdir(parents=True)
                     logger.debug(f"Created directory: {dir}")
+
+    @classmethod
+    def get_transcript_path(cls, episode_id: str) -> Path:
+        """Get standardized transcript path"""
+        return cls.TRANSCRIPTS_DIR / f"{episode_id}_transcript{cls.TRANSCRIPT_FILE_EXT}"
 
 # Create directories when module is imported
 Config.ensure_dirs() 

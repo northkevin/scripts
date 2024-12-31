@@ -14,8 +14,11 @@ class MarkdownGenerator:
         # Create episode file
         episode_file = Config.EPISODES_DIR / f"{entry.episode_id}.md"
         
-        # Format transcript link
-        transcript_link = f"[[{entry.episode_id}_transcript.md]]" if entry.transcripts_file else "Transcript not available"
+        # Format transcript link using config
+        transcript_link = (
+            f"[[{entry.episode_id}_transcript{Config.TRANSCRIPT_FILE_EXT}]]" 
+            if entry.transcripts_file else "Transcript not available"
+        )
         
         # Generate initial content with YAML frontmatter and essential metadata only
         content = f"""---
