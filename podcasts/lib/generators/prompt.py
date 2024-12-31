@@ -1,4 +1,4 @@
-from typing import Dict, List, Optional
+from typing import Dict, Optional, Any
 from pathlib import Path
 import logging
 from datetime import datetime
@@ -32,7 +32,8 @@ Select quotes that represent:
 - An emotionally resonant insight
 - A controversial claim
 Format each as:
-> [!quote] "Quote text" - Speaker (HH:MM)
+> [!quote]
+> "Quote text" - Speaker (HH:MM:SS)
 > #relevant-tags
 
 NO CONTEXT OR IMPACT STATEMENT NEEDED - let quotes speak for themselves
@@ -44,9 +45,9 @@ NO CONTEXT OR IMPACT STATEMENT NEEDED - let quotes speak for themselves
 
 3. CLAIMS (CRITICAL - 10 TARGET)
 Each claim must be:
-- Unique & substantial (no repetition)
 - Listed chronologically as they appear in transcript
 - Balanced between all major themes of the episode
+- Unique & substantial (no repetition)
 - Supported by transcript evidence
 - Tagged with #type and #topic
 Aim for 10 claims - fewer only if transcript lacks substance
@@ -85,7 +86,6 @@ Define technical terms in order of appearance:
 
 VALIDATION CHECKLIST:
 □ Read entire transcript first
-□ Included timestamps for key moments
 □ 3 impactful quotes (paradigm-shift, emotional, controversial)
 □ 10 claims (or justified fewer) in chronological order
 □ ALL references with temporal context

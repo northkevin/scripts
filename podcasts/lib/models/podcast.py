@@ -1,11 +1,14 @@
-from datetime import datetime
+from typing import Dict, List
 from pathlib import Path
 import json
-from typing import Dict, Optional, List
+import logging
+from datetime import datetime
 from dataclasses import dataclass, asdict
 
 from ..config import Config
-from ..generators.id import PodcastID, IDGenerator
+from ..generators.id import IDGenerator
+
+logger = logging.getLogger(__name__)
 
 @dataclass
 class Interviewee:
@@ -15,153 +18,115 @@ class Interviewee:
 
 @dataclass
 class PodcastEntry:
+    episode_id: str
     url: str
     platform: str
     title: str
+    description: str
+    published_at: datetime
     podcast_name: str
     interviewee: Interviewee
-    episode_id: str
-    date: str
-    status: str = "pending"  # pending, processing, error, complete
+    status: str = "pending"
     episodes_file: str = ""
     claims_file: str = ""
     transcripts_file: str = ""
-    webvtt_link: str = ""
-    process_command: str = ""
-    added_at: str = ""  # ISO format timestamp
-    updated_at: str = ""  # ISO format timestamp
     
-    def to_dict(self) -> Dict:
-        return asdict(self)
-    
-    def is_complete(self) -> bool:
-        """Check if all required files are present"""
-        return all([
-            self.episodes_file,
-            self.claims_file,
-            self.transcripts_file
-        ])
-    
-    def update_timestamp(self):
-        """Update the updated_at timestamp"""
-        self.updated_at = datetime.utcnow().isoformat()
+    @property
+    def process_command(self) -> str:
+        return f"python -m podcasts process-podcast --episode_id {self.episode_id}"
 
 class PodcastList:
-    def __init__(self, file_path: Path = Config.PODCAST_LIST):
-        self.file_path = file_path
+    def __init__(self):
         self.entries: List[PodcastEntry] = []
         self._load()
     
     def _load(self):
-        """Load existing podcast list"""
-        if self.file_path.exists():
-            with open(self.file_path) as f:
-                data = json.load(f)
+        """Load podcast list from file"""
+        try:
+            if Config.PODCAST_LIST.exists():
+                with open(Config.PODCAST_LIST, 'r') as f:
+                    data = json.load(f)
+                    
                 self.entries = [
-                    PodcastEntry(**{**entry, "interviewee": Interviewee(**entry["interviewee"])})
+                    PodcastEntry(
+                        **{
+                            **entry,
+                            'published_at': datetime.fromisoformat(entry['published_at']),
+                            'interviewee': Interviewee(**entry['interviewee'])
+                        }
+                    )
                     for entry in data
                 ]
+                
+        except Exception as e:
+            logger.error(f"Failed to load podcast list: {e}")
+            self.entries = []
     
     def _save(self):
         """Save podcast list to file"""
-        self.file_path.parent.mkdir(parents=True, exist_ok=True)
-        with open(self.file_path, 'w') as f:
-            json.dump([entry.to_dict() for entry in self.entries], f, indent=2)
+        try:
+            data = [
+                {
+                    **asdict(entry),
+                    'published_at': entry.published_at.isoformat()
+                }
+                for entry in self.entries
+            ]
+            
+            with open(Config.PODCAST_LIST, 'w') as f:
+                json.dump(data, f, indent=2)
+                
+        except Exception as e:
+            logger.error(f"Failed to save podcast list: {e}")
     
     def add_entry(self, url: str, platform: str, metadata: Dict, existing_id: str = None) -> PodcastEntry:
         """Add new podcast entry"""
-        current_time = datetime.utcnow().isoformat()
-        
-        # Extract date from metadata (should be ISO format for both platforms)
-        if 'published_at' not in metadata:
-            raise ValueError("Missing required field: published_at")
-        
-        try:
-            # Handle ISO format date strings
-            date = datetime.fromisoformat(metadata['published_at'].replace('Z', '+00:00'))
-        except ValueError as e:
-            raise ValueError(f"Invalid date format in published_at: {metadata['published_at']}") from e
-        
-        # Create interviewee info - handle missing fields
-        interviewee_data = metadata.get('interviewee', {})
-        if isinstance(interviewee_data, str):
-            # If only name is provided
-            interviewee = Interviewee(name=interviewee_data)
-        else:
-            # Full interviewee object
-            interviewee = Interviewee(
-                name=interviewee_data.get('name', 'Unknown'),
-                profession=interviewee_data.get('profession', ''),
-                organization=interviewee_data.get('organization', '')
-            )
-        
-        # Use existing ID if provided, otherwise generate new one
+        # Generate or reuse episode ID
         if existing_id:
             episode_id = existing_id
         else:
-            # Generate unique ID
-            id_generator = IDGenerator()
-            podcast_id = id_generator.generate_id(
-                date=date,
-                podcast_name=metadata.get('podcast_name', 'Unknown Podcast'),
-                interviewee_name=interviewee.name,
-                platform=platform
-            )
-            episode_id = podcast_id.base_id
+            episode_id = IDGenerator().generate_id(platform, metadata['published_at'])
         
         # Create entry
         entry = PodcastEntry(
+            episode_id=episode_id,
             url=url,
             platform=platform,
-            title=metadata.get('title', 'Untitled'),
-            podcast_name=metadata.get('podcast_name', 'Unknown Podcast'),
-            interviewee=interviewee,
-            episode_id=episode_id,
-            date=date.strftime('%Y-%m-%d'),
-            webvtt_link=metadata.get('webvtt_link', ''),
-            process_command=f"python main.py process-podcast --episode_id {episode_id}",
-            added_at=current_time,  # Set initial added_at
-            updated_at=current_time  # Set initial updated_at
+            title=metadata['title'],
+            description=metadata['description'],
+            published_at=metadata['published_at'],
+            podcast_name=metadata['podcast_name'],
+            interviewee=Interviewee(**metadata['interviewee'])
         )
         
         self.entries.append(entry)
         self._save()
+        
         return entry
     
-    def get_entry(self, episode_id: str) -> Optional[PodcastEntry]:
-        """Get entry by episode ID"""
-        return next((entry for entry in self.entries if entry.episode_id == episode_id), None)
+    def get_entry(self, episode_id: str) -> PodcastEntry:
+        """Get podcast entry by ID"""
+        return next(
+            (entry for entry in self.entries if entry.episode_id == episode_id),
+            None
+        )
     
-    def update_entry(self, episode_id: str, **kwargs) -> None:
-        """Update an existing entry"""
+    def update_entry(self, episode_id: str, **kwargs):
+        """Update podcast entry"""
         entry = self.get_entry(episode_id)
-        if not entry:
-            raise ValueError(f"No entry found with episode_id: {episode_id}")
-        
-        # Update fields
-        for key, value in kwargs.items():
-            if hasattr(entry, key):
+        if entry:
+            for key, value in kwargs.items():
                 setattr(entry, key, value)
-        
-        # Update timestamp
-        entry.update_timestamp()
-        
-        self._save()
+            self._save()
 
-def save_state(episode_id: str, status: str = "processing", **kwargs):
-    """Save current episode state"""
-    state = {
-        "episode_id": episode_id,
-        "status": status,
-        **kwargs
-    }
+def save_state(episode_id: str, status: str = "processing", error: str = None):
+    """Save podcast processing state"""
+    podcast_list = PodcastList()
+    entry = podcast_list.get_entry(episode_id)
     
-    with open(Config.CURRENT_STATE, 'w') as f:
-        json.dump(state, f, indent=2)
-
-def get_state() -> Dict:
-    """Get current episode state"""
-    if Config.CURRENT_STATE.exists():
-        with open(Config.CURRENT_STATE) as f:
-            return json.load(f)
-    return {}
+    if entry:
+        entry.status = status
+        podcast_list._save()
+        
+        if error:
+            logger.error(f"Error processing {episode_id}: {error}")
