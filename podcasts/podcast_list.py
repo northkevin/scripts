@@ -6,7 +6,7 @@ import re
 from dataclasses import dataclass, asdict
 
 from id_generator import PodcastID, IDGenerator
-from config import Config
+from podcasts.lib.config import Config
 
 @dataclass
 class Interviewee:

@@ -1,12 +1,11 @@
-# scripts/podcasts/fetch_vimeo.py
-
 import logging
 import re
 import json
 import time
 import requests
-from typing import Dict, Any, Optional
-from datetime import datetime
+import datetime
+
+from typing import Dict, Any
 from pathlib import Path
 
 from selenium import webdriver
@@ -15,9 +14,9 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 
-from podcasts.lib.config import Config
+from ..config import Config
 
-logger = logging.getLogger("podcast_cli")
+logger = logging.getLogger(__name__)
 
 def _parse_ld_json(page_source: str) -> list:
     """Extract and parse ld+json data from page source."""
@@ -102,7 +101,7 @@ def get_vimeo_data_headless(vimeo_url: str) -> Dict[str, Any]:
         logger.debug("Quitting headless browser.")
         driver.quit()
 
-def create_episode_metadata(video_id: str, data: Dict) -> Dict[str, Any]:
+def create_episode_metadata(video_id: str, data: Dict[str, Any]) -> Dict[str, Any]:
     """Create standardized metadata from Vimeo data"""
     logger.debug("Starting metadata creation for video_id: %s", video_id)
     
@@ -130,18 +129,6 @@ def create_episode_metadata(video_id: str, data: Dict) -> Dict[str, Any]:
     owner_data = video_data.get("owner", {})
     owner_name = owner_data.get("name", "")
     
-    # Try to extract professional title if present in name
-    profession = "<MANUAL>"
-    organization = "<MANUAL>"
-    
-    # Check for common titles in the interviewee name
-    title_prefixes = ["Dr.", "Professor", "Prof.", "PhD"]
-    for prefix in title_prefixes:
-        if interviewee_name.startswith(prefix):
-            profession = prefix.rstrip(".")
-            interviewee_name = interviewee_name.replace(prefix, "").strip()
-            break
-    
     # Get upload date
     upload_date = (
         ld_json_data.get("uploadDate", "").split("T")[0] or
@@ -157,19 +144,15 @@ def create_episode_metadata(video_id: str, data: Dict) -> Dict[str, Any]:
         "podcast_name": owner_name,
         "interviewee": {
             "name": interviewee_name,
-            "profession": profession,
-            "organization": organization
+            "profession": "<MANUAL>",
+            "organization": "<MANUAL>"
         },
-        "air_date": upload_date,
+        "published_at": upload_date,
         "duration": video_data.get("duration", ""),
         "summary": ld_json_data.get("description") or video_data.get("description", ""),
         "tags": video_data.get("tags", []),
         "related_topics": video_data.get("tags", [])[:5]
     }
-    
-    # Debug print the full playerConfig structure
-    logger.debug("PlayerConfig structure:")
-    logger.debug(json.dumps(data["playerConfig"], indent=2))
     
     # Extract transcript info from request.text_tracks in playerConfig
     logger.debug("Looking for request.text_tracks in playerConfig...")
@@ -193,6 +176,7 @@ def create_episode_metadata(video_id: str, data: Dict) -> Dict[str, Any]:
                     "texttrack_id": texttrack_id,
                     "token": token
                 }
+                # Use the full player.vimeo.com URL
                 metadata["webvtt_link"] = f"https://player.vimeo.com{track_url}"
                 logger.debug("Created webvtt_link: %s", metadata["webvtt_link"])
     else:
@@ -203,52 +187,6 @@ def create_episode_metadata(video_id: str, data: Dict) -> Dict[str, Any]:
         logger.warning("Failed to create webvtt_link")
         
     return metadata
-
-def convert_vtt_to_markdown(vtt_path: Path) -> Path:
-    """Convert VTT file to Markdown format"""
-    logger.debug(f"Converting VTT to Markdown: {vtt_path}")
-    
-    md_path = vtt_path.with_suffix('.md')
-    md_content = ["# Transcript\n\n"]
-    
-    try:
-        with open(vtt_path, 'r', encoding='utf-8') as vtt:
-            lines = vtt.readlines()
-            
-        # Skip the VTT header
-        start_idx = 0
-        for i, line in enumerate(lines):
-            if line.strip() == "":
-                start_idx = i + 1
-                break
-        
-        current_text = []
-        for line in lines[start_idx:]:
-            line = line.strip()
-            
-            # Skip timestamp lines and empty lines
-            if not line or '-->' in line or line.replace('-', '').isnumeric():
-                if current_text:
-                    md_content.append(' '.join(current_text) + '\n\n')
-                    current_text = []
-                continue
-                
-            current_text.append(line)
-        
-        # Add any remaining text
-        if current_text:
-            md_content.append(' '.join(current_text) + '\n\n')
-        
-        # Write markdown file
-        with open(md_path, 'w', encoding='utf-8') as md:
-            md.writelines(md_content)
-        
-        logger.debug(f"Created Markdown file: {md_path}")
-        return md_path
-        
-    except Exception as e:
-        logger.error(f"Failed to convert VTT to Markdown: {str(e)}")
-        raise
 
 def process_vimeo_transcript(entry) -> Path:
     """Process Vimeo transcript"""

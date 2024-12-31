@@ -1,10 +1,10 @@
 from datetime import datetime
 from pathlib import Path
 import re
-from typing import Optional, Dict
+from typing import Dict
 import json
 
-from podcasts.lib.config import Config
+from ..config import Config
 
 class PodcastID:
     def __init__(self, 
@@ -32,10 +32,6 @@ class PodcastID:
         """Generate the base ID string"""
         return f"{self.date.strftime('%y_%m_%d')}_{self.podcast_name}_{self.interviewee_name}_{self.platform}_{self.count:02d}"
 
-    def get_filename(self, file_type: str) -> str:
-        """Generate filename for different file types"""
-        return f"{self.base_id}_{file_type}.md"
-
     @classmethod
     def from_string(cls, id_string: str) -> 'PodcastID':
         """Create PodcastID instance from an existing ID string"""
@@ -49,26 +45,26 @@ class PodcastID:
         return cls(date, podcast, interviewee, platform, int(count))
 
 class IDGenerator:
-    def __init__(self, database_path: Path = Config.DATABASE):
-        self.database_path = database_path
-        self.id_cache = self._load_id_cache()
-
-    def _load_id_cache(self) -> Dict[str, int]:
-        """Load existing IDs to track counts"""
-        if not self.database_path.exists():
-            return {}
-            
-        with open(self.database_path) as f:
-            episodes = json.load(f)
-            
+    def __init__(self):
+        self.id_cache = self._load_cache()
+    
+    def _load_cache(self) -> Dict[str, int]:
+        """Load ID cache from podcasts.json"""
         cache = {}
-        for episode in episodes:
-            if 'podcast_name' in episode and 'interviewee' in episode:
-                key = f"{episode['podcast_name']}_{episode['interviewee']['name']}"
-                count = cache.get(key, 0) + 1
-                cache[key] = count
+        if Config.PODCAST_LIST.exists():
+            with open(Config.PODCAST_LIST) as f:
+                data = json.load(f)
+                for entry in data:
+                    # Only count entries that still exist in the file
+                    key = f"{entry['podcast_name']}_{entry['interviewee']['name']}"
+                    count = int(entry['episode_id'].split('_')[-1].replace('vimeo_', '').replace('youtube_', ''))
+                    cache[key] = max(cache.get(key, 0), count)
         return cache
-
+    
+    def reset_cache(self):
+        """Reset the ID cache"""
+        self.id_cache = {}
+    
     def generate_id(self, 
                    date: datetime,
                    podcast_name: str,

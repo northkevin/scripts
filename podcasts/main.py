@@ -2,16 +2,15 @@
 
 import argparse
 import os
-from datetime import datetime
-import json
 from pathlib import Path
 import logging
 
-from config import Config
-from fetch_youtube import YouTubeFetcher
-from fetch_vimeo import process_vimeo_transcript, get_vimeo_data_headless, create_episode_metadata
-from generate_markdown import MarkdownGenerator
-from podcast_list import PodcastList, save_state, get_state
+from lib.config import Config
+from lib.fetch.youtube import YouTubeFetcher
+from lib.fetch.vimeo import process_vimeo_transcript, get_vimeo_data_headless, create_episode_metadata
+from lib.generators.markdown import MarkdownGenerator
+from lib.models.podcast import PodcastList, save_state, get_state
+from lib.generators.id import IDGenerator
 
 logger = logging.getLogger(__name__)
 
@@ -42,6 +41,30 @@ def cmd_add_podcast(args):
         # Initialize podcast list
         podcast_list = PodcastList()
         
+        # Check if URL exists and handle gracefully
+        existing_entry = next((entry for entry in podcast_list.entries if entry.url == args.url), None)
+        if existing_entry:
+            print("\nPodcast already exists:")
+            print(f"Episode ID: {existing_entry.episode_id}")
+            print(f"Title: {existing_entry.title}")
+            print(f"Podcast: {existing_entry.podcast_name}")
+            print(f"Interviewee: {existing_entry.interviewee.name}")
+            print(f"Status: {existing_entry.status}")
+            print(f"Process Command: {existing_entry.process_command}")
+            
+            response = input("\nWould you like to overwrite this entry? (y/N): ")
+            if response.lower() != 'y':
+                print("Operation cancelled.")
+                return
+            
+            # Store the existing ID for reuse
+            existing_id = existing_entry.episode_id
+            
+            # Remove existing entry if user wants to overwrite
+            podcast_list.entries.remove(existing_entry)
+        else:
+            existing_id = None
+        
         # Get metadata based on platform
         if args.platform == "youtube":
             fetcher = YouTubeFetcher(api_key=os.getenv('YOUTUBE_API_KEY'))
@@ -52,16 +75,16 @@ def cmd_add_podcast(args):
         else:
             raise ValueError(f"Unsupported platform: {args.platform}")
         
-        # Add entry to podcast list
-        entry = podcast_list.add_entry(args.url, args.platform, metadata)
+        # Add entry to podcast list, passing the existing ID if we're overwriting
+        entry = podcast_list.add_entry(args.url, args.platform, metadata, existing_id)
         
         print("\nPodcast added successfully!")
         print(f"Episode ID: {entry.episode_id}")
         print(f"Title: {entry.title}")
         print(f"Podcast: {entry.podcast_name}")
         print(f"Interviewee: {entry.interviewee.name}")
-        print(f"\nRun next command to process content:")
-        print(f"python main.py process-podcast --episode_id {entry.episode_id}")
+        print(f"\nRun next command:")
+        print(f"{entry.process_command}")
         
     except Exception as e:
         print(f"Error: {e}")
@@ -121,27 +144,22 @@ def cmd_process_podcast(args):
         print(f"Error: {e}")
 
 def cleanup_episode(episode_id: str):
-    """Remove all files associated with an episode ID"""
+    """Clean up all files for an episode"""
     try:
-        # Initialize podcast list
         podcast_list = PodcastList()
-        
-        # Get entry
         entry = podcast_list.get_entry(episode_id)
+        
         if not entry:
-            print(f"No entry found for episode ID: {episode_id}")
+            print(f"No episode found with ID: {episode_id}")
             return
         
-        files_to_remove = [
-            Path(entry.episodes_file) if entry.episodes_file else None,
-            Path(entry.claims_file) if entry.claims_file else None,
-            Config.TRANSCRIPTS_DIR / f"{episode_id}_transcript.md"
-        ]
-        
-        for file_path in files_to_remove:
-            if file_path and file_path.exists():
-                file_path.unlink()
-                print(f"Removed: {file_path}")
+        # Remove files if they exist
+        for file_path in [entry.episodes_file, entry.claims_file, entry.transcripts_file]:
+            if file_path:
+                path = Path(file_path)
+                if path.exists():
+                    path.unlink()
+                    print(f"Removed: {path}")
         
         # Reset entry status and file paths
         podcast_list.update_entry(
@@ -152,6 +170,10 @@ def cleanup_episode(episode_id: str):
             transcripts_file=""
         )
         
+        # Reset ID cache after cleanup
+        id_generator = IDGenerator()
+        id_generator.reset_cache()
+        
         print(f"Cleaned up all files for episode: {episode_id}")
         
     except Exception as e:
@@ -160,23 +182,24 @@ def cleanup_episode(episode_id: str):
 def main():
     parser = argparse.ArgumentParser(description="Podcast processing tools")
     
-    # Add debug flag at the top level
-    parser.add_argument('--debug', action='store_true', help='Enable debug logging')
-    
     # Create subparsers
     subparsers = parser.add_subparsers(dest="command")
     
+    # Common arguments for all commands
+    parent_parser = argparse.ArgumentParser(add_help=False)
+    parent_parser.add_argument('--debug', action='store_true', help='Enable debug logging')
+    
     # Add podcast
-    add_parser = subparsers.add_parser("add-podcast")
+    add_parser = subparsers.add_parser("add-podcast", parents=[parent_parser])
     add_parser.add_argument("--platform", required=True, choices=["youtube", "vimeo"])
     add_parser.add_argument("--url", required=True)
     
     # Process podcast
-    process_parser = subparsers.add_parser("process-podcast")
+    process_parser = subparsers.add_parser("process-podcast", parents=[parent_parser])
     process_parser.add_argument("--episode_id", required=True)
     
     # Cleanup podcast
-    cleanup_parser = subparsers.add_parser("cleanup-podcast")
+    cleanup_parser = subparsers.add_parser("cleanup-podcast", parents=[parent_parser])
     cleanup_parser.add_argument("--episode_id", required=True)
     
     args = parser.parse_args()

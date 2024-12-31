@@ -1,6 +1,7 @@
 from pathlib import Path
 import logging
-from podcasts.lib.config import Config
+
+from ..config import Config
 
 logger = logging.getLogger(__name__)
 

@@ -6,8 +6,8 @@ logger = logging.getLogger(__name__)
 
 class Config:
     # Base directories
-    BASE_DIR = Path(__file__).parent
-    PROJECT_ROOT = BASE_DIR.parent
+    BASE_DIR = Path(__file__).parent.parent
+    PROJECT_ROOT = BASE_DIR
     
     # Dist directory for all generated/temporary files
     DIST_DIR = PROJECT_ROOT / "dist"
@@ -26,11 +26,6 @@ class Config:
     CLAIMS_DIR = OBSIDIAN_PODCASTS / "Claims"
     TRANSCRIPTS_DIR = OBSIDIAN_PODCASTS / "Transcripts"
     
-    # Working directories (in dist)
-    CACHE_DIR = DIST_DIR / "cache"
-    VIMEO_DIR = CACHE_DIR / "vimeo"
-    YOUTUBE_DIR = CACHE_DIR / "youtube"
-    
     @classmethod
     def ensure_dirs(cls):
         """Create all necessary directories"""
@@ -38,9 +33,6 @@ class Config:
         dist_dirs = [
             cls.DIST_DIR,
             cls.CONFIG_DIR,
-            cls.CACHE_DIR,
-            cls.VIMEO_DIR,
-            cls.YOUTUBE_DIR,
         ]
         
         # Obsidian directories

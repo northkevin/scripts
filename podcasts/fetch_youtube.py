@@ -9,7 +9,7 @@ from youtube_transcript_api import YouTubeTranscriptApi
 from youtube_transcript_api.formatters import WebVTTFormatter
 
 from schema import EPISODE_TEMPLATE
-from config import Config
+from podcasts.lib.config import Config
 
 logger = logging.getLogger("podcast_cli")
 
