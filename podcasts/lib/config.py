@@ -17,9 +17,9 @@ class Config:
     PODCAST_LIST = CONFIG_DIR / "podcasts.json"
     CURRENT_STATE = CONFIG_DIR / ".current_episode.json"
     
-    # Obsidian configuration
-    OBSIDIAN_VAULT = Path(os.getenv('OBSIDIAN_VAULT_PATH', '/Users/kevinnorth/Documents/Obsidian Vault'))
-    OBSIDIAN_PODCASTS = OBSIDIAN_VAULT / "Podcasts"
+    # Obsidian configuration - simplified path
+    OBSIDIAN_VAULT = Path(os.getenv('OBSIDIAN_VAULT_PATH', '/Users/kevinnorth/Documents/Podcasts'))
+    OBSIDIAN_PODCASTS = OBSIDIAN_VAULT
     
     # Content directories (in Obsidian)
     EPISODES_DIR = OBSIDIAN_PODCASTS / "Episodes"

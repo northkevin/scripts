@@ -2,11 +2,12 @@
 
 import argparse
 import os
+import shlex
 from pathlib import Path
 import logging
 
 from lib.config import Config
-from lib.fetch.youtube import YouTubeFetcher
+from lib.fetch.youtube import YouTubeFetcher, get_youtube_transcript
 from lib.fetch.vimeo import process_vimeo_transcript, get_vimeo_data_headless, create_episode_metadata
 from lib.generators.markdown import MarkdownGenerator
 from lib.models.podcast import PodcastList, save_state, get_state
@@ -16,24 +17,19 @@ logger = logging.getLogger(__name__)
 
 def process_youtube_transcript(entry) -> Path:
     """Process YouTube transcript"""
-    fetcher = YouTubeFetcher(
-        Config.TRANSCRIPTS_DIR,
-        api_key=os.getenv('YOUTUBE_API_KEY')
-    )
-    video_id = entry.url.split("v=")[1].split("&")[0]
-    metadata = fetcher.get_video_data(entry.url)
-    
-    if not metadata.get('transcript_file'):
-        raise Exception("No transcript available for this video")
-    
-    # Rename the transcript file to use episode_id
-    old_path = Path(metadata['transcript_file'])
-    new_path = Config.TRANSCRIPTS_DIR / f"{entry.episode_id}_transcript.md"
-    
-    if old_path.exists():
-        old_path.rename(new_path)
-    
-    return new_path
+    try:
+        # Use the standalone function instead of creating a new YouTubeFetcher
+        transcript_text = get_youtube_transcript(entry.url)
+        
+        # Save transcript to file
+        transcript_file = Config.TRANSCRIPTS_DIR / f"{entry.episode_id}_transcript.md"
+        with open(transcript_file, 'w', encoding='utf-8') as f:
+            f.write(transcript_text)
+        
+        return transcript_file
+        
+    except Exception as e:
+        raise ValueError(f"Could not get transcript: {str(e)}")
 
 def cmd_add_podcast(args):
     """Add new podcast to master list"""
@@ -101,6 +97,9 @@ def cmd_process_podcast(args):
         if not entry:
             raise ValueError(f"Episode {args.episode_id} not found")
         
+        # Ensure directories exist
+        Config.ensure_dirs()
+        
         # Save initial state
         save_state(args.episode_id)
         
@@ -133,6 +132,15 @@ def cmd_process_podcast(args):
             
             # Final state update
             save_state(args.episode_id, status="complete")
+
+            # Print success message with file details
+            print("\nProcessing completed successfully!")
+            print(f"\nFiles created:")
+            print(f"1. Episode:    {episode_file}")
+            print(f"2. Claims:     {claims_file}")
+            print(f"3. Transcript: {transcript_file}")
+            print(f"\nPodcast data stored in: {Config.PODCAST_LIST}")
+            print(f"Episode ID: {entry.episode_id}")
             
         except Exception as e:
             # Update state and master list on error
@@ -144,7 +152,7 @@ def cmd_process_podcast(args):
         print(f"Error: {e}")
 
 def cleanup_episode(episode_id: str):
-    """Clean up all files for an episode"""
+    """Clean up all files for an episode and remove from database"""
     try:
         podcast_list = PodcastList()
         entry = podcast_list.get_entry(episode_id)
@@ -161,20 +169,18 @@ def cleanup_episode(episode_id: str):
                     path.unlink()
                     print(f"Removed: {path}")
         
-        # Reset entry status and file paths
-        podcast_list.update_entry(
-            episode_id,
-            status="pending",
-            episodes_file="",
-            claims_file="",
-            transcripts_file=""
-        )
+        # Remove entry from podcast list
+        podcast_list.entries.remove(entry)
+        podcast_list._save()
         
         # Reset ID cache after cleanup
         id_generator = IDGenerator()
         id_generator.reset_cache()
         
-        print(f"Cleaned up all files for episode: {episode_id}")
+        print(f"\nCleanup completed successfully!")
+        print(f"Removed episode: {entry.title}")
+        print(f"Episode ID: {episode_id}")
+        print(f"Removed from database: {Config.PODCAST_LIST}")
         
     except Exception as e:
         print(f"Error during cleanup: {e}")
