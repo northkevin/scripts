@@ -2,7 +2,6 @@
 
 import argparse
 import os
-import shlex
 from pathlib import Path
 import logging
 
@@ -10,7 +9,7 @@ from lib.config import Config
 from lib.fetch.youtube import YouTubeFetcher, get_youtube_transcript
 from lib.fetch.vimeo import process_vimeo_transcript, get_vimeo_data_headless, create_episode_metadata
 from lib.generators.markdown import MarkdownGenerator
-from lib.models.podcast import PodcastList, save_state, get_state
+from lib.models.podcast import PodcastList, save_state
 from lib.generators.id import IDGenerator
 
 logger = logging.getLogger(__name__)
@@ -41,10 +40,9 @@ def process_youtube_transcript(entry) -> Path:
 def cmd_add_podcast(args):
     """Add new podcast to master list"""
     try:
-        # Initialize podcast list
         podcast_list = PodcastList()
         
-        # Check if URL exists and handle gracefully
+        # Check if URL exists
         existing_entry = next((entry for entry in podcast_list.entries if entry.url == args.url), None)
         if existing_entry:
             print("\nPodcast already exists:")
@@ -55,15 +53,12 @@ def cmd_add_podcast(args):
             print(f"Status: {existing_entry.status}")
             print(f"Process Command: {existing_entry.process_command}")
             
-            response = input("\nWould you like to overwrite this entry? (y/N): ")
-            if response.lower() != 'y':
+            if input("\nWould you like to overwrite this entry? (y/N): ").lower() != 'y':
                 print("Operation cancelled.")
                 return
             
-            # Store the existing ID for reuse
+            # Store existing ID and remove entry
             existing_id = existing_entry.episode_id
-            
-            # Remove existing entry if user wants to overwrite
             podcast_list.entries.remove(existing_entry)
         else:
             existing_id = None
@@ -78,7 +73,7 @@ def cmd_add_podcast(args):
         else:
             raise ValueError(f"Unsupported platform: {args.platform}")
         
-        # Add entry to podcast list, passing the existing ID if we're overwriting
+        # Add entry to podcast list
         entry = podcast_list.add_entry(args.url, args.platform, metadata, existing_id)
         
         print("\nPodcast added successfully!")
@@ -95,11 +90,9 @@ def cmd_add_podcast(args):
 def cmd_process_podcast(args):
     """Process podcast content"""
     try:
-        # Initialize podcast list and markdown generator
         podcast_list = PodcastList()
         markdown_gen = MarkdownGenerator()
         
-        # Get entry
         entry = podcast_list.get_entry(args.episode_id)
         if not entry:
             raise ValueError(f"Episode {args.episode_id} not found")
@@ -112,28 +105,20 @@ def cmd_process_podcast(args):
         
         try:
             # Generate transcript based on platform
-            if entry.platform == "youtube":
-                transcript_file = process_youtube_transcript(entry)
-            else:
-                transcript_file = process_vimeo_transcript(entry)
+            transcript_file = (process_youtube_transcript(entry) 
+                             if entry.platform == "youtube" 
+                             else process_vimeo_transcript(entry))
             
             # Update transcript file path
-            podcast_list.update_entry(
-                args.episode_id,
-                transcripts_file=str(transcript_file)
-            )
+            podcast_list.update_entry(args.episode_id, transcripts_file=str(transcript_file))
             
             # Generate episode markdown
             episode_file = markdown_gen.generate_episode_markdown(entry)
-            podcast_list.update_entry(
-                args.episode_id,
-                episodes_file=str(episode_file)
-            )
+            podcast_list.update_entry(args.episode_id, episodes_file=str(episode_file))
             
             # Final state update
             save_state(args.episode_id, status="complete")
             
-            # Print success message with file details
             print("\nProcessing completed successfully!")
             print(f"\nFiles created:")
             print(f"1. Episode:    {episode_file}")
@@ -142,7 +127,6 @@ def cmd_process_podcast(args):
             print(f"Episode ID: {entry.episode_id}")
             
         except Exception as e:
-            # Update state and master list on error
             save_state(args.episode_id, status="error", error=str(e))
             podcast_list.update_entry(args.episode_id, status="error")
             raise
@@ -168,13 +152,10 @@ def cleanup_episode(episode_id: str):
                     path.unlink()
                     print(f"Removed: {path}")
         
-        # Remove entry from podcast list
+        # Remove entry and reset ID cache
         podcast_list.entries.remove(entry)
         podcast_list._save()
-        
-        # Reset ID cache after cleanup
-        id_generator = IDGenerator()
-        id_generator.reset_cache()
+        IDGenerator().reset_cache()
         
         print(f"\nCleanup completed successfully!")
         print(f"Removed episode: {entry.title}")
@@ -186,30 +167,27 @@ def cleanup_episode(episode_id: str):
 
 def main():
     parser = argparse.ArgumentParser(description="Podcast processing tools")
-    
-    # Create subparsers
     subparsers = parser.add_subparsers(dest="command")
     
-    # Common arguments for all commands
-    parent_parser = argparse.ArgumentParser(add_help=False)
-    parent_parser.add_argument('--debug', action='store_true', help='Enable debug logging')
+    # Add debug flag to main parser
+    parser.add_argument('--debug', action='store_true', help='Enable debug logging')
     
     # Add podcast
-    add_parser = subparsers.add_parser("add-podcast", parents=[parent_parser])
+    add_parser = subparsers.add_parser("add-podcast")
     add_parser.add_argument("--platform", required=True, choices=["youtube", "vimeo"])
     add_parser.add_argument("--url", required=True)
     
     # Process podcast
-    process_parser = subparsers.add_parser("process-podcast", parents=[parent_parser])
+    process_parser = subparsers.add_parser("process-podcast")
     process_parser.add_argument("--episode_id", required=True)
     
     # Cleanup podcast
-    cleanup_parser = subparsers.add_parser("cleanup-podcast", parents=[parent_parser])
+    cleanup_parser = subparsers.add_parser("cleanup-podcast")
     cleanup_parser.add_argument("--episode_id", required=True)
     
     args = parser.parse_args()
     
-    # Configure logging based on debug flag
+    # Configure logging
     if args.debug:
         logging.basicConfig(level=logging.DEBUG)
         logger.setLevel(logging.DEBUG)
