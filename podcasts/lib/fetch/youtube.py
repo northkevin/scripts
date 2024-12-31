@@ -9,14 +9,17 @@ from youtube_transcript_api import YouTubeTranscriptApi
 from googleapiclient.errors import HttpError
 
 from ..config import Config
+from ..models.schemas import Metadata, Interviewee, TranscriptData
+from ..processors.transcript import TranscriptService
 
 logger = logging.getLogger(__name__)
 
 class YouTubeFetcher:
     def __init__(self, api_key: str):
         self.youtube = build('youtube', 'v3', developerKey=api_key)
+        self.transcript_service = TranscriptService()
     
-    def get_video_data(self, url: str) -> Dict:
+    def get_video_data(self, url: str) -> Metadata:
         """Get video metadata from YouTube"""
         video_id = self._extract_video_id(url)
         if not video_id:
@@ -34,23 +37,18 @@ class YouTubeFetcher:
             video_data = response['items'][0]
             snippet = video_data['snippet']
             
-            # Extract date and ensure it's a datetime
-            published_at = datetime.strptime(
-                snippet['publishedAt'], 
-                '%Y-%m-%dT%H:%M:%SZ'
+            return Metadata(
+                title=snippet['title'],
+                description=snippet['description'],
+                published_at=datetime.strptime(snippet['publishedAt'], '%Y-%m-%dT%H:%M:%SZ'),
+                podcast_name=self._extract_podcast_name(snippet),
+                url=url,
+                interviewee=Interviewee(
+                    name=self._extract_interviewee_name(snippet),
+                    profession=self._extract_profession(snippet),
+                    organization=self._extract_organization(snippet)
+                )
             )
-            
-            return {
-                'title': snippet['title'],
-                'description': snippet['description'],
-                'published_at': published_at,
-                'podcast_name': self._extract_podcast_name(snippet),
-                'interviewee': {
-                    'name': self._extract_interviewee_name(snippet),
-                    'profession': self._extract_profession(snippet),
-                    'organization': self._extract_organization(snippet)
-                }
-            }
             
         except HttpError as e:
             logger.error(f"YouTube API error: {str(e)}")
@@ -119,49 +117,28 @@ class YouTubeFetcher:
                 return line.strip()
                 
         return ""
-
-def get_youtube_transcript(url: str) -> str:
-    """Get transcript from YouTube video"""
-    logger.debug(f"Fetching transcript for URL: {url}")
     
-    video_id = None
-    for pattern in [
-        r'(?:youtube\.com/watch\?v=|youtu\.be/)([^&\n?#]+)',
-        r'youtube\.com/embed/([^&\n?#]+)',
-        r'youtube\.com/v/([^&\n?#]+)',
-    ]:
-        if match := re.search(pattern, url):
-            video_id = match.group(1)
-            break
+    def get_transcript(self, url: str) -> TranscriptData:
+        """Get transcript from YouTube video"""
+        logger.debug(f"Fetching transcript for URL: {url}")
+        
+        video_id = None
+        for pattern in [
+            r'(?:youtube\.com/watch\?v=|youtu\.be/)([^&\n?#]+)',
+            r'youtube\.com/embed/([^&\n?#]+)',
+            r'youtube\.com/v/([^&\n?#]+)',
+        ]:
+            if match := re.search(pattern, url):
+                video_id = match.group(1)
+                break
             
-    if not video_id:
-        raise ValueError(f"Could not extract video ID from URL: {url}")
-    
-    try:
-        transcript_list = YouTubeTranscriptApi.get_transcript(video_id)
+        if not video_id:
+            raise ValueError(f"Could not extract video ID from URL: {url}")
         
-        # Debug: Save raw API response
-        debug_file = Config.DIST_DIR / f"{video_id}_raw_api_response.txt"
-        with open(debug_file, 'w', encoding='utf-8') as f:
-            f.write("Raw YouTube Transcript API Response:\n")
-            f.write("=" * 50 + "\n\n")
-            json.dump(transcript_list, f, indent=2)
-        
-        formatted_lines = ["# Transcript\n"]
-        formatted_lines.append("```timestamp-transcript")
-        
-        for item in transcript_list:
-            start_time = f"{int(item['start']//3600):02d}:{int((item['start']%3600)//60):02d}:{item['start']%60:06.3f}"
-            end_time = f"{int((item['start']+item['duration'])//3600):02d}:{int(((item['start']+item['duration'])%3600)//60):02d}:{(item['start']+item['duration'])%60:06.3f}"
+        try:
+            transcript_list = YouTubeTranscriptApi.get_transcript(video_id)
+            return self.transcript_service.process_transcript('youtube', transcript_list)
             
-            formatted_lines.extend([
-                f"\n[{start_time} --> {end_time}]",
-                f"{item['text']}"
-            ])
-            
-        formatted_lines.append("\n```")
-        return "\n".join(formatted_lines)
-        
-    except Exception as e:
-        logger.error(f"Error fetching transcript: {str(e)}")
-        raise ValueError(f"Could not get transcript: {str(e)}")
+        except Exception as e:
+            logger.error(f"Error fetching transcript: {str(e)}")
+            raise ValueError(f"Could not get transcript: {str(e)}")

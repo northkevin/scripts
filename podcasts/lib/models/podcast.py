@@ -1,23 +1,18 @@
-from typing import Dict, List
-from pathlib import Path
 import json
 import logging
+from pathlib import Path
 from datetime import datetime
-from dataclasses import dataclass, asdict
+from typing import List, Optional
+
+from pydantic import BaseModel
 
 from ..config import Config
 from ..generators.id import IDGenerator
+from .schemas import Metadata, Interviewee
 
 logger = logging.getLogger(__name__)
 
-@dataclass
-class Interviewee:
-    name: str
-    profession: str = ""
-    organization: str = ""
-
-@dataclass
-class PodcastEntry:
+class PodcastEntry(BaseModel):
     episode_id: str
     url: str
     platform: str
@@ -34,6 +29,20 @@ class PodcastEntry:
     @property
     def process_command(self) -> str:
         return f"python -m podcasts process-podcast --episode_id {self.episode_id}"
+    
+    @classmethod
+    def from_metadata(cls, metadata: Metadata, platform: str, episode_id: str) -> "PodcastEntry":
+        """Create entry from metadata"""
+        return cls(
+            episode_id=episode_id,
+            url=str(metadata.url),
+            platform=platform,
+            title=metadata.title,
+            description=metadata.description,
+            published_at=metadata.published_at,
+            podcast_name=metadata.podcast_name,
+            interviewee=metadata.interviewee
+        )
 
 class PodcastList:
     def __init__(self):
@@ -46,18 +55,8 @@ class PodcastList:
             if Config.PODCAST_LIST.exists():
                 with open(Config.PODCAST_LIST, 'r') as f:
                     data = json.load(f)
+                    self.entries = [PodcastEntry.parse_obj(entry) for entry in data]
                     
-                self.entries = [
-                    PodcastEntry(
-                        **{
-                            **entry,
-                            'published_at': datetime.fromisoformat(entry['published_at']),
-                            'interviewee': Interviewee(**entry['interviewee'])
-                        }
-                    )
-                    for entry in data
-                ]
-                
         except Exception as e:
             logger.error(f"Failed to load podcast list: {e}")
             self.entries = []
@@ -65,46 +64,27 @@ class PodcastList:
     def _save(self):
         """Save podcast list to file"""
         try:
-            data = [
-                {
-                    **asdict(entry),
-                    'published_at': entry.published_at.isoformat()
-                }
-                for entry in self.entries
-            ]
-            
+            data = [entry.dict() for entry in self.entries]
             with open(Config.PODCAST_LIST, 'w') as f:
                 json.dump(data, f, indent=2)
                 
         except Exception as e:
             logger.error(f"Failed to save podcast list: {e}")
     
-    def add_entry(self, url: str, platform: str, metadata: Dict, existing_id: str = None) -> PodcastEntry:
+    def add_entry(self, url: str, platform: str, metadata: Metadata, existing_id: Optional[str] = None) -> PodcastEntry:
         """Add new podcast entry"""
         # Generate or reuse episode ID
-        if existing_id:
-            episode_id = existing_id
-        else:
-            episode_id = IDGenerator().generate_id(platform, metadata['published_at'])
+        episode_id = existing_id or IDGenerator().generate_id(platform, metadata.published_at)
         
-        # Create entry
-        entry = PodcastEntry(
-            episode_id=episode_id,
-            url=url,
-            platform=platform,
-            title=metadata['title'],
-            description=metadata['description'],
-            published_at=metadata['published_at'],
-            podcast_name=metadata['podcast_name'],
-            interviewee=Interviewee(**metadata['interviewee'])
-        )
+        # Create entry from metadata
+        entry = PodcastEntry.from_metadata(metadata, platform, episode_id)
         
         self.entries.append(entry)
         self._save()
         
         return entry
     
-    def get_entry(self, episode_id: str) -> PodcastEntry:
+    def get_entry(self, episode_id: str) -> Optional[PodcastEntry]:
         """Get podcast entry by ID"""
         return next(
             (entry for entry in self.entries if entry.episode_id == episode_id),
@@ -115,11 +95,13 @@ class PodcastList:
         """Update podcast entry"""
         entry = self.get_entry(episode_id)
         if entry:
-            for key, value in kwargs.items():
-                setattr(entry, key, value)
+            # Update fields and validate with Pydantic
+            updated_data = entry.dict()
+            updated_data.update(kwargs)
+            self.entries[self.entries.index(entry)] = PodcastEntry.parse_obj(updated_data)
             self._save()
 
-def save_state(episode_id: str, status: str = "processing", error: str = None):
+def save_state(episode_id: str, status: str = "processing", error: Optional[str] = None):
     """Save podcast processing state"""
     podcast_list = PodcastList()
     entry = podcast_list.get_entry(episode_id)
