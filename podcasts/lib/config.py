@@ -21,9 +21,8 @@ class Config:
     OBSIDIAN_VAULT = Path(os.getenv('OBSIDIAN_VAULT_PATH', '/Users/kevinnorth/Documents/Podcasts'))
     OBSIDIAN_PODCASTS = OBSIDIAN_VAULT
     
-    # Content directories (in Obsidian)
+    # Content directories (in Obsidian) - simplified structure
     EPISODES_DIR = OBSIDIAN_PODCASTS / "Episodes"
-    CLAIMS_DIR = OBSIDIAN_PODCASTS / "Claims"
     TRANSCRIPTS_DIR = OBSIDIAN_PODCASTS / "Transcripts"
     
     @classmethod
@@ -35,11 +34,10 @@ class Config:
             cls.CONFIG_DIR,
         ]
         
-        # Obsidian directories
+        # Obsidian directories - simplified
         obsidian_dirs = [
             cls.OBSIDIAN_PODCASTS,
             cls.EPISODES_DIR,
-            cls.CLAIMS_DIR,
             cls.TRANSCRIPTS_DIR,
         ]
         

@@ -15,31 +15,9 @@ def generate_analysis_prompt(
     date: str = None,
     interviewee: Dict = None
 ) -> str:
-    """Generate a ChatGPT prompt for podcast analysis in Obsidian format
+    """Generate a ChatGPT prompt for podcast analysis in Obsidian format"""
     
-    Args:
-        title: Episode title
-        podcast_name: Name of podcast
-        episode_id: Unique episode identifier
-        share_url: URL to episode
-        transcript_filename: Name of transcript file
-        platform_type: Platform type (youtube/vimeo)
-        date: Air date (optional)
-        interviewee: Optional dictionary with interviewee details
-    
-    Returns:
-        str: Formatted prompt text
-    """
-    
-    # Build interviewee context
-    interviewee_context = f"""  - Name: {interviewee.get('name', 'Unknown')}
-  - Profession: {interviewee.get('profession', 'Unknown')}
-  - Organization: {interviewee.get('organization', 'Unknown')}""" if interviewee else "  No interviewee information available"
-
-    # Format date if provided
-    date_str = date if date else datetime.now().strftime('%Y-%m-%d')
-
-    prompt = f"""Please perform a comprehensive analysis of this podcast episode's transcript, considering its full length and complexity. Use the following details to structure your response:
+    prompt = f"""Please analyze this podcast episode's transcript and generate a replacement section for the episode note in Obsidian. Focus on extracting key insights while maintaining readability and linkability.
 
 ### Input Details
 - Title: {title}
@@ -47,123 +25,168 @@ def generate_analysis_prompt(
 - Episode ID: {episode_id}
 - Platform: {platform_type}
 - Share URL: {share_url}
-- Air Date: {date_str}
-- Transcript File: [[Transcripts/{transcript_filename}]]
-- Known Interviewee Info:
-{interviewee_context}
+- Transcript: [[{transcript_filename}]]
 
-### Analysis Guidelines
-1. Content Coverage:
-   - Read and analyze the ENTIRE transcript before summarizing
-   - Pay special attention to topic transitions and thematic shifts
-   - Note when the conversation depth changes or pivots
+### Analysis Instructions
+1. Notable Quotes (HIGHEST PRIORITY):
+   - Select 2-3 powerful quotes that:
+     * Capture the most paradigm-shifting moment
+     * Represent the emotional peak of the conversation
+     * Showcase the most controversial or thought-provoking insight
+     * Serve as a "hook" for the entire episode
+     * Make the reader want to listen immediately
+   - Format quotes to:
+     * Include speaker emotion/tone where relevant
+     * Provide minimal but crucial context
+     * Highlight the most impactful moments
+     * Draw attention to unique perspectives
+
+2. Episode Overview Requirements:
+   - Provide a 1-2 sentence summary that captures:
+     * The core topic or main thesis
+     * The unique perspective or approach
+     * The broader implications or significance
+     * The key areas of discussion
+   - Avoid generic descriptions
+   - Include specific subject matter
+   - Name key concepts introduced
+   - Highlight what makes this episode distinctive
+
+3. Claims Analysis (CRITICAL):
+   - Extract 8-15 significant claims - this is essential for cross-linking across episodes
+   - Each claim should represent a distinct, substantial insight
+   - Claims form the foundation for knowledge graph connections
+   - Avoid redundant or superficial points
+   - Look for:
+     * Paradigm-shifting statements
+     * Novel interpretations of familiar concepts
+     * Unique perspectives that challenge conventional wisdom
+     * Interconnections with other fields or topics
+     * Technical insights and their broader implications
+   - Claims will be used to:
+     * Build topic networks across episodes
+     * Connect ideas between different speakers
+     * Identify emerging patterns and themes
+     * Enable deep comparative analysis
+     * In-depth explorations of complex topics
+     * Detailed technical discussions
+
+4. Content Coverage:
+   - Analyze the ENTIRE transcript before summarizing
+   - Track topic transitions and thematic shifts
+   - Note conversation depth changes and pivots
    - Consider both explicit statements and implicit connections
-   - Track recurring themes across the full duration
+   - Balance early, middle, and late segment representation
 
-2. Time-Based Analysis:
-   - Mark significant timestamps throughout the entire episode
-   - Note the progression of ideas across early, middle, and late segments
-   - Identify when key concepts are introduced vs. when they're expanded upon
-   - Track how ideas evolate or change throughout the conversation
-
-3. Multi-Speaker Dynamics:
+5. Multi-Speaker Dynamics:
    - Distinguish between host and guest perspectives
    - Note areas of agreement/disagreement
    - Capture unique insights from each participant
-   - Track when viewpoints converge or diverge
+   - Track viewpoint convergence/divergence
 
-4. Complex Topic Handling:
+6. Complex Topic Handling:
    - Break down complex topics into digestible components
    - Connect related ideas across different timestamps
-   - Identify prerequisite concepts for complex topics
-   - Note when technical terms are introduced and explained
+   - Identify prerequisite concepts
+   - Note when technical terms are introduced
 
-5. Depth Considerations:
-   - For 2+ hour episodes, ensure coverage of later segments
-   - Balance early, middle, and late content representation
-   - Track energy levels and content quality changes
-   - Note when deep dives occur vs. surface-level discussion
+7. Obsidian Formatting:
+   - Use #tags for topics, themes, and key concepts
+   - Use [[links]] only for existing documents
+   - Use **bold** for emphasis and important terms
+   - Use > [!quote] for significant quotes
+   - Use proper heading hierarchy
+   - Use 4 spaces for each level of indentation
+   - Ensure consistent spacing after list markers (- or 1.)
+   - Start each new list item at the correct indentation level
+   
 
-6. Cross-Referencing:
-   - Note mentions of other episodes, books, or resources
-   - Track references to previous conversations
-   - Identify potential connections to other content
-   - Flag areas for future research or follow-up
+<start-section>
+## Notable Quotes
+> [!quote] [Speaker Name]
+> "The most paradigm-shifting statement"
+> - Context: [Brief emotional/intellectual impact]
+> #paradigm-shift #key-insight
 
-### Output Structure
-- **Metadata**: All input details formatted in YAML at the top for machine-readability.
-- **Summary**: A concise, engaging summary of the episode (2–3 sentences).
-- **Claims**: A structured list of 8–20 significant claims, each with:
-  * Timestamp (HH:MM:SS format)
-  * Category (key point, unique perspective, groundbreaking idea)
-  * Clear, concise statement
-  * Segment indicator (early, middle, late)
-- **Themes and Topics**: A high-level list of themes and specific topics discussed.
-- **Insights and Questions**: Notes or questions based on the episode for creative exploration.
-- **Links**: Include links to the transcript, related episodes, and external resources.
+## Episode Overview
+[Generate 1-2 sentences that capture the episode's essence, key topics, and significance]
 
-## Topic Progression
-- Early Segment (0:00-33%):
-  - Main themes:
-  - Key transitions:
-- Middle Segment (33-66%):
-  - Main themes:
-  - Key transitions:
-- Late Segment (66-100%):
-  - Main themes:
-  - Key transitions:
+## Key Claims
+8-15 most significant insights that contribute to our broader knowledge network:
+
+1. **Core Insight**: Claim text
+   - Speaker perspective
+   - Supporting context
+   - Related: #tag
+   - Type: #key-point #unique-perspective #groundbreaking
+   - Segment: Early/Middle/Late
+
+## Conversation Flow
+**Opening** 
+- Core themes: [Main topics introduced]
+- Key transitions: [How discussion evolves]
+- Notable insights: [Key points from first third]
+#early-segment
+
+**Development**
+- Evolution: [How topics deepen]
+- Key shifts: [Major perspective changes]
+- Main developments: [Critical middle points]
+#middle-segment
+
+**Conclusion**
+- Resolution: [How topics conclude]
+- Final insights: [Key revelations]
+- Key takeaways: [Essential lessons]
+#late-segment
 
 ## Technical Terms & Concepts
-- Term 1: [First mentioned HH:MM:SS] Brief explanation
-- Term 2: [First mentioned HH:MM:SS] Brief explanation
-
-## Deep Dives
-- Topic 1: [HH:MM:SS - HH:MM:SS] Brief overview
-- Topic 2: [HH:MM:SS - HH:MM:SS] Brief overview
+- **[Term]**
+  - Definition/Context
+  - Evolution throughout discussion
+  - Related: #tag
+  #technical-term
 
 ## External References
-- Books mentioned:
-- People referenced:
-- Related episodes:
-- Recommended resources:
+**Books & Publications**
+- **[Book Title]** by [Author Name]
+  - Context: [How this book relates to discussion]
+  - Connection: [Link to main themes]
+  #book #author-[name] #[relevant-topic] #[century-published]
 
-## Follow-up Research
-- [ ] Topic 1: Specific area for deeper investigation
-- [ ] Topic 2: Potential connection to explore
+**People & Organizations**
+- **[Person Name]** - [Role/Position]
+  - Contribution: [Their specific insight or impact]
+  - Field: [Area of expertise/influence]
+  #person #[role] #[field] #[century-active]
 
-### Quality Assurance Checklist
-1. Coverage:
-   - [ ] Analyzed entire transcript
-   - [ ] Balanced representation of all segments
-   - [ ] Captured major theme transitions
-   - [ ] Noted significant context shifts
+**Technologies & Methods**
+- **[Technology/Method Name]**
+  - Description: [What it is/does]
+  - Significance: [Why it matters to discussion]
+  #technology #[type] #[application] #[century-developed]
 
-2. Claims Quality:
-   - [ ] Verified timestamps accuracy
-   - [ ] Eliminated redundant claims
-   - [ ] Balanced claim distribution
-   - [ ] Preserved complex context
+## Research Threads
+- [ ] **Topic** - Specific area to explore
+- [ ] **Connection** - Potential link to investigate
 
-3. Technical Accuracy:
-   - [ ] Verified technical terms
-   - [ ] Checked name spellings
-   - [ ] Validated external references
-   - [ ] Confirmed chronological order
+## Tags
+#podcast #{platform_type} #episode-topic #key-themes
+<end-section>
 
-4. Cross-Linking:
-   - [ ] Added relevant internal links
-   - [ ] Included external references
-   - [ ] Tagged appropriately
-   - [ ] Noted related content
+Remember:
+1. Maintain comprehensive coverage while being concise
+2. Preserve speaker dynamics and perspective shifts
+3. Track idea evolution across the full episode
+4. Break down complex topics effectively
+5. Create meaningful connections through tags
+6. Ensure proper linking to transcript
+7. Balance detail with accessibility
+8. Create useful entry points for future research
 
-Please ensure your analysis:
-- Maintains context across the entire episode length
-- Balances detail with accessibility
-- Preserves complex ideas while making them approachable
-- Creates useful entry points for future research
-- Enables effective knowledge graph connections
-
-Output the complete Markdown note with all sections filled based on thorough analysis of the entire transcript."""
+IMPORTANT: 
+- Include ONLY the markdown content between <start-section> and <end-section> tags, but DO NOT include these tags
+- Your response should start directly with '## Key Claims' and end with the tags section."""
 
     return prompt
 
@@ -262,14 +285,26 @@ def format_claims_markdown(gpt_response: Dict) -> str:
     return "\n".join(claims_md)
 
 def save_prompt_to_episode(episode_path: Path, prompt: str):
-    """Temporarily save the ChatGPT prompt to the episode file
+    """Save the ChatGPT analysis section and prompt in the episode file
     
     Args:
         episode_path: Path to episode markdown file
         prompt: Generated prompt text
     """
     with open(episode_path, 'a') as f:
-        f.write("\n\n## ChatGPT Analysis Prompt\n")
+        # Add Analysis section first
+        f.write("\n\n---\n")
+        f.write("## ChatGPT Analysis\n\n")
+        f.write("> [!note] Paste the ChatGPT response below this line\n\n")
+        f.write("...paste here...\n\n")
+        f.write("\n\n---\n\n")
+        
+        
+        
+        # Add Prompt section below
+        f.write("## ChatGPT Prompt\n\n")
+        f.write("> [!info] Use this prompt with the transcript to generate the analysis above\n\n")
         f.write("```\n")
         f.write(prompt)
-        f.write("\n```\n") 
+        f.write("\n```\n")
+        f.write("\n---\n") 

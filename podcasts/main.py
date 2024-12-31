@@ -123,22 +123,14 @@ def cmd_process_podcast(args):
                 episodes_file=str(episode_file)
             )
             
-            # Generate claims markdown
-            claims_file = markdown_gen.generate_claims_markdown(entry)
-            podcast_list.update_entry(
-                args.episode_id,
-                claims_file=str(claims_file)
-            )
-            
             # Final state update
             save_state(args.episode_id, status="complete")
-
+            
             # Print success message with file details
             print("\nProcessing completed successfully!")
             print(f"\nFiles created:")
             print(f"1. Episode:    {episode_file}")
-            print(f"2. Claims:     {claims_file}")
-            print(f"3. Transcript: {transcript_file}")
+            print(f"2. Transcript: {transcript_file}")
             print(f"\nPodcast data stored in: {Config.PODCAST_LIST}")
             print(f"Episode ID: {entry.episode_id}")
             
