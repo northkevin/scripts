@@ -2,363 +2,211 @@
 
 import argparse
 import os
+from datetime import datetime
 import json
 from pathlib import Path
-import logging
 
-from fetch_vimeo import get_vimeo_data_headless
-from transcript_utils import download_vtt_file
-from generate_prompt import generate_prompt
-from fetch_youtube import YouTubeFetcher
 from config import Config
-
-# ------------------------------------------------------------
-# Paths & State Management
-# ------------------------------------------------------------
-BASE_DIR = Path(__file__).parent
-PODCAST_DATA = BASE_DIR / "Podcast Data"
-TRANSCRIPTS_DIR = PODCAST_DATA / "transcripts"
-STATE_FILE = PODCAST_DATA / ".current_episode.json"
-DEFAULT_DB_FILE = PODCAST_DATA / "podcast_data.json"
-
-EPISODE_SCHEMA = {
-    "episode_id": "",
-    "title": "",
-    "share_url": "",
-    "podcast_name": "",
-    "interviewee": {
-        "name": "<MANUAL>",
-        "profession": "<MANUAL>",
-        "organization": "<MANUAL>"
-    },
-    "air_date": "",
-    "summary": "<MANUAL>",
-    "claims": [],
-    "related_topics": [],
-    "tags": [],
-    "webvtt_link": "",
-    "transcript_file": ""
-}
-
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
-logger = logging.getLogger("podcast_cli")
-
-def get_state_file(platform_type: str = None) -> Path:
-    """Get appropriate state file based on platform"""
-    if platform_type == "youtube":
-        return Config.YOUTUBE_STATE
-    elif platform_type == "vimeo":
-        return Config.VIMEO_STATE
-    else:
-        # Try to detect from existing state files
-        if os.path.exists(Config.YOUTUBE_STATE):
-            return Config.YOUTUBE_STATE
-        if os.path.exists(Config.VIMEO_STATE):
-            return Config.VIMEO_STATE
-        # Default to YouTube if can't determine
-        return Config.YOUTUBE_STATE
-
-def save_state(platform_type: str = None, episode_id=None, transcript_file=None, metadata=None):
-    """Save current episode state to platform-specific state file"""
-    state_file = get_state_file(platform_type)
-    state_file.parent.mkdir(exist_ok=True)
+from fetch_youtube import YouTubeFetcher
+from fetch_vimeo import get_vimeo_data_headless, create_episode_metadata
+from generate_markdown import MarkdownGenerator
+from podcast_list import PodcastList, save_state, get_state
+from id_generator import PodcastID, IDGenerator
+from fetch_vimeo import download_vtt_file
+def process_youtube_transcript(entry) -> Path:
+    """Process YouTube transcript"""
+    fetcher = YouTubeFetcher(
+        Config.TRANSCRIPTS_DIR,
+        api_key=os.getenv('YOUTUBE_API_KEY')
+    )
+    video_id = entry.url.split("v=")[1].split("&")[0]
+    metadata = fetcher.get_video_data(entry.url)
     
-    state = {}
-    if os.path.exists(state_file):
-        with open(state_file) as f:
-            state = json.load(f)
+    if not metadata.get('transcript_file'):
+        raise Exception("No transcript available for this video")
     
-    if episode_id:
-        state["episode_id"] = episode_id
-    if transcript_file:
-        state["transcript_file"] = transcript_file
-    if metadata:
-        state["metadata"] = metadata
-        
-    with open(state_file, 'w') as f:
-        json.dump(state, f, indent=2)
+    # Rename the transcript file to use episode_id
+    old_path = Path(metadata['transcript_file'])
+    new_path = Config.TRANSCRIPTS_DIR / f"{entry.episode_id}_transcript.vtt"
+    
+    if old_path.exists():
+        old_path.rename(new_path)
+    
+    return new_path
 
-def get_state(platform_type: str = None) -> dict:
-    """Get current episode state from appropriate platform file"""
-    state_file = get_state_file(platform_type)
-    if os.path.exists(state_file):
-        with open(state_file) as f:
-            return json.load(f)
-    return {}
+def process_vimeo_transcript(entry) -> Path:
+    """Process Vimeo transcript"""
+    data = get_vimeo_data_headless(entry.url)
+    metadata = create_episode_metadata(
+        data["playerConfig"]["video"]["id"],
+        data
+    )
+    
+    if not metadata.get('transcript_info'):
+        raise Exception("No transcript available for this video")
+    
+    # Download transcript
+    transcript_path = Config.TRANSCRIPTS_DIR / f"{entry.episode_id}_transcript.vtt"
+    webvtt_link = metadata['webvtt_link']
+    
+    # Use the function from fetch_vimeo
+    download_vtt_file(webvtt_link, transcript_path)
+    
+    return transcript_path
 
-def save_to_database(metadata, db_file=DEFAULT_DB_FILE):
-    """Save/update episode in the master database"""
-    db_file.parent.mkdir(exist_ok=True)
-    
-    # Load existing database
-    episodes = []
-    if os.path.exists(db_file):
-        with open(db_file) as f:
-            episodes = json.load(f)
-    
-    # Update or add episode
-    episode_id = metadata["episode_id"]
-    for i, ep in enumerate(episodes):
-        if ep["episode_id"] == episode_id:
-            episodes[i].update(metadata)
-            break
-    else:
-        episodes.append(metadata)
-    
-    # Save database
-    with open(db_file, 'w') as f:
-        json.dump(episodes, f, indent=2)
+def generate_episode_markdown(entry) -> Path:
+    """Generate episode markdown file"""
+    generator = MarkdownGenerator()
+    markdown = generator.generate_episode_markdown(entry)
+    return generator.save_markdown(entry.episode_id, markdown, 'episode')
 
-def create_episode_metadata(video_id, vimeo_data):
-    """Create episode metadata using consistent schema"""
-    player_data = vimeo_data["playerConfig"]
-    ld_json_list = vimeo_data["ld_json"]
-    ld_video = next((x for x in ld_json_list if x.get("@type") == "VideoObject"), {})
-    
-    # Start with template
-    metadata = EPISODE_SCHEMA.copy()
-    
-    # Fill what we can from Vimeo
-    metadata.update({
-        "episode_id": str(video_id),
-        "title": ld_video.get("name", player_data.get("video", {}).get("title", "")),
-        "share_url": player_data.get("video", {}).get("share_url", ""),
-        "podcast_name": player_data.get("video", {}).get("owner", {}).get("name", "<MANUAL>"),
-        "air_date": ld_video.get("uploadDate", ""),
-    })
-    
-    # Get transcript info if available
-    text_tracks = player_data.get("request", {}).get("text_tracks", [])
-    if text_tracks:
-        url = text_tracks[0].get("url", "")
-        if "/texttrack/" in url:
-            texttrack_id = url.split("/texttrack/")[1].split(".")[0]
-            token = url.split("token=")[1] if "token=" in url else None
-            metadata["webvtt_link"] = f"https://player.vimeo.com/texttrack/{texttrack_id}.vtt?token={token}"
-            metadata["transcript_info"] = {"texttrack_id": texttrack_id, "token": token}
-    
-    return metadata
+def generate_claims_markdown(entry) -> Path:
+    """Generate claims markdown file"""
+    generator = MarkdownGenerator()
+    markdown = generator.generate_claims_markdown(entry)
+    return generator.save_markdown(entry.episode_id, markdown, 'claims')
 
-# ------------------------------------------------------------
-# Commands
-# ------------------------------------------------------------
-def cmd_parse_episode(args):
-    """Parse basic data from Vimeo URL"""
+def cmd_add_podcast(args):
+    """Add new podcast to master list"""
     try:
-        data = get_vimeo_data_headless(args.vimeo_url)
-        video_id = str(data["playerConfig"].get("video", {}).get("id", "unknown"))
+        # Initialize podcast list
+        podcast_list = PodcastList()
         
-        # Create metadata using schema
-        metadata = create_episode_metadata(video_id, data)
-        metadata["platform_type"] = "vimeo"  # Add platform type
-        
-        # Save state and database
-        save_state(
-            platform_type="vimeo",
-            episode_id=video_id,
-            metadata=metadata
-        )
-        save_to_database(metadata)
-        
-        print("\nEpisode Info:")
-        print(f"ID: {metadata['episode_id']}")
-        print(f"Title: {metadata['title']}")
-        print(f"Podcast: {metadata['podcast_name']}")
-        
-        if metadata.get("transcript_info"):
-            print(f"\nTranscript available!")
-            print(f"texttrack_id: {metadata['transcript_info']['texttrack_id']}")
-            print(f"token: {metadata['transcript_info']['token']}")
-            print("\nRun next command:")
-            print(f"python main.py get-transcript --episode_id {video_id}")
-        
-        print("\nNote: Some fields need manual/ChatGPT completion:")
-        print("- Interviewee details")
-        print("- Summary")
-        print("- Claims (after transcript)")
-        print("- Related topics")
-        print("- Tags")
-        
-    except Exception as e:
-        print(f"Error: {e}")
-
-def cmd_get_transcript(args):
-    """Download transcript using saved state"""
-    state = get_state()
-    episode_id = args.episode_id or state.get("episode_id")
-    if not episode_id:
-        print("Error: No episode_id provided or found in state")
-        return
-        
-    metadata = state.get("metadata", {})
-    transcript_info = metadata.get("transcript_info")
-    if not transcript_info:
-        print("Error: No transcript info found in state")
-        return
-        
-    try:
-        TRANSCRIPTS_DIR.mkdir(exist_ok=True)
-        out_path = TRANSCRIPTS_DIR / f"{episode_id}_transcript.vtt"
-        
-        webvtt_link = f"https://player.vimeo.com/texttrack/{transcript_info['texttrack_id']}.vtt?token={transcript_info['token']}"
-        download_vtt_file(webvtt_link, str(out_path))
-        
-        # Save state for next command
-        save_state(transcript_file=str(out_path))
-        
-        print(f"Transcript saved to: {out_path}")
-        print("\nRun next command:")
-        print(f"python main.py generate-prompt --episode_id {episode_id}")
-        
-    except Exception as e:
-        print(f"Error: {e}")
-
-def get_transcript_path(episode_id: str, platform_type: str = None) -> Path:
-    """Get the appropriate transcript path based on platform"""
-    if platform_type == "youtube":
-        return Config.YOUTUBE_TRANSCRIPTS / f"{episode_id}_transcript.vtt"
-    else:
-        return Config.VIMEO_TRANSCRIPTS / f"{episode_id}_transcript.vtt"
-
-def get_prompt_file(platform_type: str = None) -> Path:
-    """Get path for saving the generated prompt"""
-    if platform_type == "youtube":
-        return Config.YOUTUBE_DIR / "current_episode_prompt.txt"
-    else:
-        return Config.VIMEO_DIR / "current_episode_prompt.txt"
-
-def cmd_generate_prompt(args):
-    """Generate ChatGPT prompt using saved state"""
-    state = get_state()
-    episode_id = args.episode_id or state.get("episode_id")
-    transcript_file = args.transcript_file
-    platform_type = state.get("metadata", {}).get("platform_type")
-    
-    # Try to use provided JSON file, then default database
-    json_file = args.json_file or Config.DATABASE
-    
-    if not episode_id:
-        print("Error: No episode_id provided or found in state")
-        print("Hint: First run either:")
-        print("- parse-youtube for YouTube videos")
-        print("- parse-episode for Vimeo videos")
-        return
-    
-    # If no transcript file provided, check platform-specific location
-    if not transcript_file:
-        transcript_file = str(get_transcript_path(episode_id, platform_type))
-    
-    if not os.path.exists(transcript_file):
-        print(f"Error: Transcript file not found: {transcript_file}")
-        print("\nHint: Check these locations:")
-        print(f"YouTube: {Config.YOUTUBE_TRANSCRIPTS}/{episode_id}_transcript.vtt")
-        print(f"Vimeo: {Config.VIMEO_TRANSCRIPTS}/{episode_id}_transcript.vtt")
-        return
-    
-    try:
-        # Generate the prompt
-        prompt = generate_prompt(episode_id, transcript_file, json_file)
-        
-        # Save to platform-specific output file
-        prompt_file = get_prompt_file(platform_type)
-        with open(prompt_file, 'w') as f:
-            f.write(prompt)
-        
-        print("\nPrompt generated successfully!")
-        print(f"Saved to: {prompt_file}")
-        print("\nPreview (first 500 chars):")
-        print("-" * 40)
-        print(prompt[:500] + "...")
-        print("-" * 40)
-        print(f"\nFull prompt available in: {prompt_file}")
-        
-    except Exception as e:
-        print(f"Error: {e}")
-        print("\nHint: Make sure you've completed these steps:")
-        if platform_type == "youtube":
-            print("1. Run parse-youtube to get video data and transcript")
+        # Get metadata based on platform
+        if args.platform == "youtube":
+            fetcher = YouTubeFetcher(api_key=os.getenv('YOUTUBE_API_KEY'))
+            metadata = fetcher.get_video_data(args.url)
+        elif args.platform == "vimeo":
+            data = get_vimeo_data_headless(args.url)
+            metadata = create_episode_metadata(data["playerConfig"]["video"]["id"], data)
         else:
-            print("1. Run parse-episode to get video data")
-            print("2. Run get-transcript to download the transcript")
-        print(f"\nThen check that episode exists in: {json_file}")
+            raise ValueError(f"Unsupported platform: {args.platform}")
+        
+        # Add entry to podcast list
+        entry = podcast_list.add_entry(args.url, args.platform, metadata)
+        
+        print("\nPodcast added successfully!")
+        print(f"Episode ID: {entry.episode_id}")
+        print(f"Title: {entry.title}")
+        print(f"Podcast: {entry.podcast_name}")
+        print(f"Interviewee: {entry.interviewee.name}")
+        print(f"\nRun next command to process content:")
+        print(f"python main.py process-podcast --episode_id {entry.episode_id}")
+        
+    except Exception as e:
+        print(f"Error: {e}")
 
-def cmd_parse_youtube(args):
-    """Parse YouTube video and download transcript"""
+def cmd_process_podcast(args):
+    """Process podcast content"""
     try:
-        fetcher = YouTubeFetcher(
-            Config.YOUTUBE_TRANSCRIPTS,
-            api_key=os.getenv('YOUTUBE_API_KEY')
-        )
-        metadata = fetcher.get_video_data(args.url)
+        # Initialize podcast list
+        podcast_list = PodcastList()
         
-        if not metadata:
-            raise Exception("Failed to get video metadata")
+        # Get entry
+        entry = podcast_list.get_entry(args.episode_id)
+        if not entry:
+            raise ValueError(f"Episode {args.episode_id} not found")
         
-        # Save to platform-specific state
-        save_state(
-            platform_type="youtube",
-            episode_id=metadata["episode_id"],
-            metadata=metadata
-        )
-        save_to_database(metadata)
+        # Save initial state
+        save_state(args.episode_id)
         
-        print("\nVideo Info:")
-        print(f"ID: {metadata['episode_id']}")
-        print(f"Title: {metadata.get('title', 'Unknown')}")
-        print(f"Channel: {metadata.get('podcast_name', 'Unknown')}")
-        
-        if metadata.get("transcript_file"):
-            print(f"\nTranscript saved to: {metadata['transcript_file']}")
-            print("\nRun next command to generate prompt:")
-            print("python main.py generate-prompt")
-        else:
-            print("\nNo transcript available for this video")
+        try:
+            # Generate transcript
+            if entry.platform == "youtube":
+                transcript_file = process_youtube_transcript(entry)
+            else:
+                transcript_file = process_vimeo_transcript(entry)
             
+            # Update transcript file path
+            podcast_list.update_entry(
+                args.episode_id,
+                transcripts_file=str(transcript_file)
+            )
+            
+            # Generate episode markdown
+            episode_file = generate_episode_markdown(entry)
+            podcast_list.update_entry(
+                args.episode_id,
+                episodes_file=str(episode_file)
+            )
+            
+            # Generate claims markdown
+            claims_file = generate_claims_markdown(entry)
+            podcast_list.update_entry(
+                args.episode_id,
+                claims_file=str(claims_file)
+            )
+            
+            # Final state update
+            save_state(args.episode_id, status="complete")
+            
+        except Exception as e:
+            # Update state and master list on error
+            save_state(args.episode_id, status="error", error=str(e))
+            podcast_list.update_entry(args.episode_id, status="error")
+            raise
+        
     except Exception as e:
         print(f"Error: {e}")
-        if args.debug:
-            import traceback
-            print("\nFull traceback:")
-            print(traceback.format_exc())
+
+def cleanup_episode(episode_id: str):
+    """Remove all files associated with an episode ID"""
+    try:
+        # Initialize podcast list
+        podcast_list = PodcastList()
+        
+        # Get entry
+        entry = podcast_list.get_entry(episode_id)
+        if not entry:
+            print(f"No entry found for episode ID: {episode_id}")
+            return
+        
+        files_to_remove = [
+            Path(entry.episodes_file) if entry.episodes_file else None,
+            Path(entry.claims_file) if entry.claims_file else None,
+            Path(entry.transcripts_file) if entry.transcripts_file else None,
+            Config.TRANSCRIPTS_DIR / f"{episode_id}_transcript.vtt",  # New standard format
+            Config.YOUTUBE_TRANSCRIPTS / f"{episode_id}_transcript.vtt",  # Backup location
+        ]
+        
+        for file_path in files_to_remove:
+            if file_path and file_path.exists():
+                file_path.unlink()
+                print(f"Removed: {file_path}")
+        
+        # Reset entry status and file paths
+        podcast_list.update_entry(
+            episode_id,
+            status="pending",
+            episodes_file="",
+            claims_file="",
+            transcripts_file=""
+        )
+        
+        print(f"Cleaned up all files for episode: {episode_id}")
+        
+    except Exception as e:
+        print(f"Error during cleanup: {e}")
 
 def main():
     parser = argparse.ArgumentParser(description="Podcast processing tools")
     subparsers = parser.add_subparsers(dest="command")
     
-    # Parse episode
-    parse_parser = subparsers.add_parser("parse-episode")
-    parse_parser.add_argument("--vimeo_url", required=True)
-    parse_parser.set_defaults(func=cmd_parse_episode)
+    # Add podcast
+    add_parser = subparsers.add_parser("add-podcast")
+    add_parser.add_argument("--platform", required=True, choices=["youtube", "vimeo"])
+    add_parser.add_argument("--url", required=True)
+    add_parser.set_defaults(func=cmd_add_podcast)
     
-    # Get transcript (now uses saved state)
-    transcript_parser = subparsers.add_parser("get-transcript")
-    transcript_parser.add_argument("--episode_id", help="Optional if state exists")
-    transcript_parser.set_defaults(func=cmd_get_transcript)
+    # Process podcast
+    process_parser = subparsers.add_parser("process-podcast")
+    process_parser.add_argument("--episode_id", required=True)
+    process_parser.set_defaults(func=cmd_process_podcast)
     
-    # Generate prompt (uses saved state)
-    prompt_parser = subparsers.add_parser("generate-prompt")
-    prompt_parser.add_argument("--episode_id", help="Optional if state exists")
-    prompt_parser.add_argument("--transcript_file", help="Optional if state exists")
-    prompt_parser.add_argument("--json_file", help="Optional JSON database file")
-    prompt_parser.set_defaults(func=cmd_generate_prompt)
-    
-    # Parse YouTube
-    youtube_parser = subparsers.add_parser("parse-youtube",
-        help="Parse YouTube video and download transcript")
-    youtube_parser.add_argument("--url", required=True,
-        help="YouTube video URL")
-    youtube_parser.add_argument("--debug", action="store_true",
-        help="Run in debug mode (shows browser)")
-    youtube_parser.add_argument("--initial-wait", type=int, default=10,
-        help="Initial page load wait time in seconds")
-    youtube_parser.add_argument("--element-wait", type=int, default=5,
-        help="Wait time for individual elements in seconds")
-    youtube_parser.add_argument("--retries", type=int, default=3,
-        help="Number of retry attempts")
-    youtube_parser.set_defaults(func=cmd_parse_youtube)
+    # Cleanup podcast
+    cleanup_parser = subparsers.add_parser("cleanup-podcast")
+    cleanup_parser.add_argument("--episode_id", required=True)
+    cleanup_parser.set_defaults(func=lambda args: cleanup_episode(args.episode_id))
     
     args = parser.parse_args()
     if args.command:

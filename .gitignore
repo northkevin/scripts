@@ -2,6 +2,7 @@
 **transcript.txt**
 Podcast Data/
 podcasts/Podcast Data/
+podcasts/podcasts.json
 
 # Ignore all logs and analysis files from mix_test_slowest
 old/mix_test_slowest/logs/
